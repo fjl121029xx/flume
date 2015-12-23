@@ -26,6 +26,9 @@ public enum Log4jAvroHeaders {
   TIMESTAMP("flume.client.log4j.timestamp"),
   AVRO_SCHEMA_LITERAL("flume.avro.schema.literal"),
   AVRO_SCHEMA_URL("flume.avro.schema.url");
+  APP_NAME("app.name"),
+  APP_Event_TYPE("app.event.type"),
+  APP_SOURCE_HOST("app.source.host");
 
   private String headerName;
   private Log4jAvroHeaders(String headerName){
