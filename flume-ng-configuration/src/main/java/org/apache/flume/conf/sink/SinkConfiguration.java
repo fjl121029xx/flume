@@ -54,7 +54,7 @@ public class SinkConfiguration extends ComponentConfiguration {
   }
 
   @Override
-  public String toString(int indentCount){
+  public String toString(int indentCount) {
     StringBuilder indentSb = new StringBuilder("");
 
     for (int i = 0; i < indentCount; i++) {
@@ -153,7 +153,15 @@ public class SinkConfiguration extends ComponentConfiguration {
      * Hive Sink
      * @see org.apache.flume.sink.hive.HiveSink
      */
-    HIVE("org.apache.flume.sink.hive.HiveSinkConfiguration");
+    HIVE("org.apache.flume.sink.hive.HiveSinkConfiguration"),
+
+    /**
+     * HTTP Sink
+     * @see org.apache.flume.sink.http.HttpSink
+     */
+    HTTP("org.apache.flume.sink.http.HttpSinkConfiguration");
+
+
 
     private final String sinkConfigurationName;
 
@@ -187,7 +195,7 @@ public class SinkConfiguration extends ComponentConfiguration {
         instance = new SinkConfiguration(name);
         // Let the caller know that this was created because of this exception.
         instance.setNotFoundConfigClass();
-      } catch (Exception e){
+      } catch (Exception e) {
         throw new ConfigurationException("Couldn't create configuration", e);
       }
       return instance;

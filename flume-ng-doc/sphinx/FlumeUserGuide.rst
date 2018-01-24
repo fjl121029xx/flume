@@ -15,7 +15,7 @@
 
 
 ======================================
-Flume 1.7.0-SNAPSHOT User Guide
+Flume 1.9.0-SNAPSHOT User Guide
 ======================================
 
 Introduction
@@ -28,29 +28,29 @@ Apache Flume is a distributed, reliable, and available system for efficiently
 collecting, aggregating and moving large amounts of log data from many
 different sources to a centralized data store.
 
-The use of Apache Flume is not only restricted to log data aggregation. 
+The use of Apache Flume is not only restricted to log data aggregation.
 Since data sources are customizable, Flume can be used to transport massive quantities
-of event data including but not limited to network traffic data, social-media-generated data, 
+of event data including but not limited to network traffic data, social-media-generated data,
 email messages and pretty much any data source possible.
 
 Apache Flume is a top level project at the Apache Software Foundation.
 
 There are currently two release code lines available, versions 0.9.x and 1.x.
 
-Documentation for the 0.9.x track is available at 
+Documentation for the 0.9.x track is available at
 `the Flume 0.9.x User Guide <http://archive.cloudera.com/cdh/3/flume/UserGuide/>`_.
 
 This documentation applies to the 1.4.x track.
 
-New and existing users are encouraged to use the 1.x releases so as to 
-leverage the performance improvements and configuration flexibilities available 
+New and existing users are encouraged to use the 1.x releases so as to
+leverage the performance improvements and configuration flexibilities available
 in the latest architecture.
 
 
 System Requirements
 -------------------
 
-#. Java Runtime Environment - Java 1.6 or later (Java 1.7 Recommended)
+#. Java Runtime Environment - Java 1.8 or later
 #. Memory - Sufficient memory for configurations used by sources, channels or sinks
 #. Disk Space - Sufficient disk space for configurations used by channels or sinks
 #. Directory Permissions - Read/Write permissions for directories used by agent
@@ -234,6 +234,55 @@ The original Flume terminal will output the event in a log message.
 
 Congratulations - you've successfully configured and deployed a Flume agent! Subsequent sections cover agent configuration in much more detail.
 
+Using environment variables in configuration files
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Flume has the ability to substitute environment variables in the configuration. For example::
+
+  a1.sources = r1
+  a1.sources.r1.type = netcat
+  a1.sources.r1.bind = 0.0.0.0
+  a1.sources.r1.port = ${NC_PORT}
+  a1.sources.r1.channels = c1
+
+NB: it currently works for values only, not for keys. (Ie. only on the "right side" of the `=` mark of the config lines.)
+
+This can be enabled via Java system properties on agent invocation by setting `propertiesImplementation = org.apache.flume.node.EnvVarResolverProperties`.
+
+For example::
+  $ NC_PORT=44444 bin/flume-ng agent --conf conf --conf-file example.conf --name a1 -Dflume.root.logger=INFO,console -DpropertiesImplementation=org.apache.flume.node.EnvVarResolverProperties
+
+Note the above is just an example, environment variables can be configured in other ways, including being set in `conf/flume-env.sh`.
+
+Logging raw data
+~~~~~~~~~~~~~~~~
+
+
+Logging the raw stream of data flowing through the ingest pipeline is not desired behaviour in
+many production environments because this may result in leaking sensitive data or security related
+configurations, such as secret keys, to Flume log files.
+By default, Flume will not log such information. On the other hand, if the data pipeline is broken,
+Flume will attempt to provide clues for debugging the problem.
+
+One way to debug problems with event pipelines is to set up an additional `Memory Channel`_
+connected to a `Logger Sink`_, which will output all event data to the Flume logs.
+In some situations, however, this approach is insufficient.
+
+In order to enable logging of event- and configuration-related data, some Java system properties
+must be set in addition to log4j properties.
+
+To enable configuration-related logging, set the Java system property
+``-Dorg.apache.flume.log.printconfig=true``. This can either be passed on the command line or by
+setting this in the ``JAVA_OPTS`` variable in *flume-env.sh*.
+
+To enable data logging, set the Java system property ``-Dorg.apache.flume.log.rawdata=true``
+in the same way described above. For most components, the log4j logging level must also be set to
+DEBUG or TRACE to make event-specific logging appear in the Flume logs.
+
+Here is an example of enabling both configuration logging and raw data logging while also
+setting the Log4j loglevel to DEBUG for console output::
+
+  $ bin/flume-ng agent --conf conf --conf-file example.conf --name a1 -Dflume.root.logger=DEBUG,console -Dorg.apache.flume.log.printconfig=true -Dorg.apache.flume.log.rawdata=true
+
 
 Zookeeper based Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -326,8 +375,6 @@ Executing commands
 There's an exec source that executes a given command and consumes the output. A
 single 'line' of output ie. text followed by carriage return ('\\r') or line
 feed ('\\n') or both together.
-
-.. note:: Flume does not support tail as a source. One can wrap the tail command in an exec source to stream the file.
 
 Network streams
 ~~~~~~~~~~~~~~~
@@ -548,9 +595,9 @@ Weblog agent config:
   agent_foo.sinks.avro-forward-sink.channel = file-channel
 
   # avro sink properties
-  agent_foo.sources.avro-forward-sink.type = avro
-  agent_foo.sources.avro-forward-sink.hostname = 10.1.1.100
-  agent_foo.sources.avro-forward-sink.port = 10000
+  agent_foo.sinks.avro-forward-sink.type = avro
+  agent_foo.sinks.avro-forward-sink.hostname = 10.1.1.100
+  agent_foo.sinks.avro-forward-sink.port = 10000
 
   # configure other pieces
   #...
@@ -569,7 +616,7 @@ HDFS agent config:
   agent_foo.sources.avro-collection-source.channels = mem-channel
   agent_foo.sinks.hdfs-sink.channel = mem-channel
 
-  # avro sink properties
+  # avro source properties
   agent_foo.sources.avro-collection-source.type = avro
   agent_foo.sources.avro-collection-source.bind = 10.1.1.100
   agent_foo.sources.avro-collection-source.port = 10000
@@ -852,12 +899,8 @@ interceptors.*
              asynchronous interface such as ExecSource! As an extension of this
              warning - and to be completely clear - there is absolutely zero guarantee
              of event delivery when using this source. For stronger reliability
-             guarantees, consider the Spooling Directory Source or direct integration
+             guarantees, consider the Spooling Directory Source, Taildir Source or direct integration
              with Flume via the SDK.
-
-.. note:: You can use ExecSource to emulate TailSource from Flume 0.9x (flume og).
-          Just use unix command ``tail -F /full/path/to/your/file``. Parameter
-          -F is better in this case than -f as it will also follow file rotation.
 
 Example for agent named a1:
 
@@ -900,7 +943,7 @@ Property Name               Default      Description
 **channels**                --
 **type**                    --           The component type name, needs to be ``jms``
 **initialContextFactory**   --           Inital Context Factory, e.g: org.apache.activemq.jndi.ActiveMQInitialContextFactory
-**connectionFactory**       --           The JNDI name the connection factory shoulld appear as
+**connectionFactory**       --           The JNDI name the connection factory should appear as
 **providerURL**             --           The JMS provider URL
 **destinationName**         --           Destination name
 **destinationType**         --           Destination type (queue or topic)
@@ -911,6 +954,12 @@ batchSize                   100          Number of messages to consume in one ba
 converter.type              DEFAULT      Class to use to convert messages to flume events. See below.
 converter.*                 --           Converter properties.
 converter.charset           UTF-8        Default converter only. Charset to use when converting JMS TextMessages to byte arrays.
+createDurableSubscription   false        Whether to create durable subscription. Durable subscription can only be used with
+                                         destinationType topic. If true, "clientId" and "durableSubscriptionName"
+                                         have to be specified.
+clientId                    --           JMS client identifier set on Connection right after it is created.
+                                         Required for durable subscriptions.
+durableSubscriptionName     --           Name used to identify the durable subscription. Required for durable subscriptions.
 =========================   ===========  ==============================================================
 
 
@@ -976,48 +1025,60 @@ Despite the reliability guarantees of this source, there are still
 cases in which events may be duplicated if certain downstream failures occur.
 This is consistent with the guarantees offered by other Flume components.
 
-====================  ==============  ==========================================================
-Property Name         Default         Description
-====================  ==============  ==========================================================
-**channels**          --
-**type**              --              The component type name, needs to be ``spooldir``.
-**spoolDir**          --              The directory from which to read files from.
-fileSuffix            .COMPLETED      Suffix to append to completely ingested files
-deletePolicy          never           When to delete completed files: ``never`` or ``immediate``
-fileHeader            false           Whether to add a header storing the absolute path filename.
-fileHeaderKey         file            Header key to use when appending absolute path filename to event header.
-basenameHeader        false           Whether to add a header storing the basename of the file.
-basenameHeaderKey     basename        Header Key to use when appending  basename of file to event header.
-ignorePattern         ^$              Regular expression specifying which files to ignore (skip)
-trackerDir            .flumespool     Directory to store metadata related to processing of files.
-                                      If this path is not an absolute path, then it is interpreted as relative to the spoolDir.
-consumeOrder          oldest          In which order files in the spooling directory will be consumed ``oldest``,
-                                      ``youngest`` and ``random``. In case of ``oldest`` and ``youngest``, the last modified
-                                      time of the files will be used to compare the files. In case of a tie, the file
-                                      with smallest lexicographical order will be consumed first. In case of ``random`` any
-                                      file will be picked randomly. When using ``oldest`` and ``youngest`` the whole
-                                      directory will be scanned to pick the oldest/youngest file, which might be slow if there
-                                      are a large number of files, while using ``random`` may cause old files to be consumed
-                                      very late if new files keep coming in the spooling directory.
-maxBackoff            4000            The maximum time (in millis) to wait between consecutive attempts to write to the channel(s) if the channel is full. The source will start at a low backoff and increase it exponentially each time the channel throws a ChannelException, upto the value specified by this parameter.
-batchSize             100             Granularity at which to batch transfer to the channel
-inputCharset          UTF-8           Character set used by deserializers that treat the input file as text.
-decodeErrorPolicy     ``FAIL``        What to do when we see a non-decodable character in the input file.
-                                      ``FAIL``: Throw an exception and fail to parse the file.
-                                      ``REPLACE``: Replace the unparseable character with the "replacement character" char,
-                                      typically Unicode U+FFFD.
-                                      ``IGNORE``: Drop the unparseable character sequence.
-deserializer          ``LINE``        Specify the deserializer used to parse the file into events.
-                                      Defaults to parsing each line as an event. The class specified must implement
-                                      ``EventDeserializer.Builder``.
-deserializer.*                        Varies per event deserializer.
-bufferMaxLines        --              (Obselete) This option is now ignored.
-bufferMaxLineLength   5000            (Deprecated) Maximum length of a line in the commit buffer. Use deserializer.maxLineLength instead.
-selector.type         replicating     replicating or multiplexing
-selector.*                            Depends on the selector.type value
-interceptors          --              Space-separated list of interceptors
+========================  ==============  ==========================================================
+Property Name             Default         Description
+========================  ==============  ==========================================================
+**channels**              --
+**type**                  --              The component type name, needs to be ``spooldir``.
+**spoolDir**              --              The directory from which to read files from.
+fileSuffix                .COMPLETED      Suffix to append to completely ingested files
+deletePolicy              never           When to delete completed files: ``never`` or ``immediate``
+fileHeader                false           Whether to add a header storing the absolute path filename.
+fileHeaderKey             file            Header key to use when appending absolute path filename to event header.
+basenameHeader            false           Whether to add a header storing the basename of the file.
+basenameHeaderKey         basename        Header Key to use when appending  basename of file to event header.
+includePattern            ^.*$            Regular expression specifying which files to include.
+                                          It can used together with ``ignorePattern``.
+                                          If a file matches both ``ignorePattern`` and ``includePattern`` regex,
+                                          the file is ignored.
+ignorePattern             ^$              Regular expression specifying which files to ignore (skip).
+                                          It can used together with ``includePattern``.
+                                          If a file matches both ``ignorePattern`` and ``includePattern`` regex,
+                                          the file is ignored.
+trackerDir                .flumespool     Directory to store metadata related to processing of files.
+                                          If this path is not an absolute path, then it is interpreted as relative to the spoolDir.
+consumeOrder              oldest          In which order files in the spooling directory will be consumed ``oldest``,
+                                          ``youngest`` and ``random``. In case of ``oldest`` and ``youngest``, the last modified
+                                          time of the files will be used to compare the files. In case of a tie, the file
+                                          with smallest lexicographical order will be consumed first. In case of ``random`` any
+                                          file will be picked randomly. When using ``oldest`` and ``youngest`` the whole
+                                          directory will be scanned to pick the oldest/youngest file, which might be slow if there
+                                          are a large number of files, while using ``random`` may cause old files to be consumed
+                                          very late if new files keep coming in the spooling directory.
+pollDelay                 500             Delay (in milliseconds) used when polling for new files.
+recursiveDirectorySearch  false           Whether to monitor sub directories for new files to read.
+maxBackoff                4000            The maximum time (in millis) to wait between consecutive attempts to
+                                          write to the channel(s) if the channel is full. The source will start at
+                                          a low backoff and increase it exponentially each time the channel throws a
+                                          ChannelException, upto the value specified by this parameter.
+batchSize                 100             Granularity at which to batch transfer to the channel
+inputCharset              UTF-8           Character set used by deserializers that treat the input file as text.
+decodeErrorPolicy         ``FAIL``        What to do when we see a non-decodable character in the input file.
+                                          ``FAIL``: Throw an exception and fail to parse the file.
+                                          ``REPLACE``: Replace the unparseable character with the "replacement character" char,
+                                          typically Unicode U+FFFD.
+                                          ``IGNORE``: Drop the unparseable character sequence.
+deserializer              ``LINE``        Specify the deserializer used to parse the file into events.
+                                          Defaults to parsing each line as an event. The class specified must implement
+                                          ``EventDeserializer.Builder``.
+deserializer.*                            Varies per event deserializer.
+bufferMaxLines            --              (Obselete) This option is now ignored.
+bufferMaxLineLength       5000            (Deprecated) Maximum length of a line in the commit buffer. Use deserializer.maxLineLength instead.
+selector.type             replicating     replicating or multiplexing
+selector.*                                Depends on the selector.type value
+interceptors              --              Space-separated list of interceptors
 interceptors.*
-====================  ==============  ==========================================================
+========================  ==============  ==========================================================
 
 Example for an agent named agent-1:
 
@@ -1092,7 +1153,7 @@ deserializer.maxBlobLength  100000000           The maximum number of bytes to r
 
 Taildir Source
 ~~~~~~~~~~~~~~~~~~~~~~~~~
-.. note:: **This source is provided as a preview feature. It does not work on Windows.** This source requires Java version 1.7 or later.
+.. note:: **This source is provided as a preview feature. It does not work on Windows.**
 
 Watch the specified files, and tail them in nearly real-time once detected new lines appended to the each files.
 If the new lines are being written, this source will retry reading them in wait for the completion of the write.
@@ -1125,6 +1186,12 @@ writePosInterval                    3000                           Interval time
 batchSize                           100                            Max number of lines to read and send to the channel at a time. Using the default is usually fine.
 backoffSleepIncrement               1000                           The increment for time delay before reattempting to poll for new data, when the last attempt did not find any new data.
 maxBackoffSleep                     5000                           The max time delay between each reattempt to poll for new data, when the last attempt did not find any new data.
+cachePatternMatching                true                           Listing directories and applying the filename regex pattern may be time consuming for directories
+                                                                   containing thousands of files. Caching the list of matching files can improve performance.
+                                                                   The order in which files are consumed will also be cached.
+                                                                   Requires that the file system keeps track of modification times with at least a 1-second granularity.
+fileHeader                          false                          Whether to add a header storing the absolute path filename.
+fileHeaderKey                       file                           Header key to use when appending absolute path filename to event header.
 =================================== ============================== ===================================================
 
 Example for agent named a1:
@@ -1142,17 +1209,18 @@ Example for agent named a1:
   a1.sources.r1.filegroups.f2 = /var/log/test2/.*log.*
   a1.sources.r1.headers.f2.headerKey1 = value2
   a1.sources.r1.headers.f2.headerKey2 = value2-2
+  a1.sources.r1.fileHeader = true
 
 Twitter 1% firehose Source (experimental)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. warning::
-  This source is hightly experimental and may change between minor versions of Flume.
+  This source is highly experimental and may change between minor versions of Flume.
   Use at your own risk.
 
 Experimental source that connects via Streaming API to the 1% sample twitter
 firehose, continously downloads tweets, converts them to Avro format and
-sends Avro events to a downstream Flume sink. Requires the consumer and 
+sends Avro events to a downstream Flume sink. Requires the consumer and
 access tokens and secrets of a Twitter developer account.
 Required properties are in **bold**.
 
@@ -1164,7 +1232,7 @@ Property Name          Default      Description
 **consumerKey**        --           OAuth consumer key
 **consumerSecret**     --           OAuth consumer secret
 **accessToken**        --           OAuth access token
-**accessTokenSecret**  --           OAuth toekn secret 
+**accessTokenSecret**  --           OAuth token secret
 maxBatchSize           1000         Maximum number of twitter messages to put in a single batch
 maxBatchDurationMillis 1000         Maximum number of milliseconds to wait before closing a batch
 ====================== ===========  ===================================================
@@ -1187,61 +1255,234 @@ Example for agent named a1:
 Kafka Source
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Kafka Source is an Apache Kafka consumer that reads messages from a Kafka topic.
+Kafka Source is an Apache Kafka consumer that reads messages from Kafka topics.
 If you have multiple Kafka sources running, you can configure them with the same Consumer Group
-so each will read a unique set of partitions for the topic.
+so each will read a unique set of partitions for the topics.
 
-
-
-===============================  ===========  ===================================================
-Property Name                    Default      Description
-===============================  ===========  ===================================================
-**channels**                     --
-**type**                         --           The component type name, needs to be ``org.apache.flume.source.kafka,KafkaSource``
-**zookeeperConnect**             --           URI of ZooKeeper used by Kafka cluster
-**groupId**                      flume        Unique identified of consumer group. Setting the same id in multiple sources or agents
-                                              indicates that they are part of the same consumer group
-**topic**                        --           Kafka topic we'll read messages from. At the time, this is a single topic only.
-batchSize                        1000         Maximum number of messages written to Channel in one batch
-batchDurationMillis              1000         Maximum time (in ms) before a batch will be written to Channel
-                                              The batch will be written whenever the first of size and time will be reached.
-backoffSleepIncrement            1000         Initial and incremental wait time that is triggered when a Kafka Topic appears to be empty.
-                                              Wait period will reduce aggressive pinging of an empty Kafka Topic.  One second is ideal for
-                                              ingestion use cases but a lower value may be required for low latency operations with
-                                              interceptors.
-maxBackoffSleep                  5000         Maximum wait time that is triggered when a Kafka Topic appears to be empty.  Five seconds is
-                                              ideal for ingestion use cases but a lower value may be required for low latency operations
-                                              with interceptors.
-Other Kafka Consumer Properties  --           These properties are used to configure the Kafka Consumer. Any producer property supported
-                                              by Kafka can be used. The only requirement is to prepend the property name with the prefix ``kafka.``.
-                                              For example: kafka.consumer.timeout.ms
-                                              Check `Kafka documentation <https://kafka.apache.org/08/configuration.html#consumerconfigs>` for details
-===============================  ===========  ===================================================
+==================================  ===========  ===================================================
+Property Name                       Default      Description
+==================================  ===========  ===================================================
+**channels**                        --
+**type**                            --           The component type name, needs to be ``org.apache.flume.source.kafka.KafkaSource``
+**kafka.bootstrap.servers**         --           List of brokers in the Kafka cluster used by the source
+kafka.consumer.group.id             flume        Unique identified of consumer group. Setting the same id in multiple sources or agents
+                                                 indicates that they are part of the same consumer group
+**kafka.topics**                    --           Comma-separated list of topics the kafka consumer will read messages from.
+**kafka.topics.regex**              --           Regex that defines set of topics the source is subscribed on. This property has higher priority
+                                                 than ``kafka.topics`` and overrides ``kafka.topics`` if exists.
+batchSize                           1000         Maximum number of messages written to Channel in one batch
+batchDurationMillis                 1000         Maximum time (in ms) before a batch will be written to Channel
+                                                 The batch will be written whenever the first of size and time will be reached.
+backoffSleepIncrement               1000         Initial and incremental wait time that is triggered when a Kafka Topic appears to be empty.
+                                                 Wait period will reduce aggressive pinging of an empty Kafka Topic.  One second is ideal for
+                                                 ingestion use cases but a lower value may be required for low latency operations with
+                                                 interceptors.
+maxBackoffSleep                     5000         Maximum wait time that is triggered when a Kafka Topic appears to be empty.  Five seconds is
+                                                 ideal for ingestion use cases but a lower value may be required for low latency operations
+                                                 with interceptors.
+useFlumeEventFormat                 false        By default events are taken as bytes from the Kafka topic directly into the event body. Set to
+                                                 true to read events as the Flume Avro binary format. Used in conjunction with the same property
+                                                 on the KafkaSink or with the parseAsFlumeEvent property on the Kafka Channel this will preserve
+                                                 any Flume headers sent on the producing side.
+setTopicHeader                      true         When set to true, stores the topic of the retrieved message into a header, defined by the
+                                                 ``topicHeader`` property.
+topicHeader                         topic        Defines the name of the header in which to store the name of the topic the message was received
+                                                 from, if the ``setTopicHeader`` property is set to ``true``. Care should be taken if combining
+                                                 with the Kafka Sink ``topicHeader`` property so as to avoid sending the message back to the same
+                                                 topic in a loop.
+migrateZookeeperOffsets             true         When no Kafka stored offset is found, look up the offsets in Zookeeper and commit them to Kafka.
+                                                 This should be true to support seamless Kafka client migration from older versions of Flume.
+                                                 Once migrated this can be set to false, though that should generally not be required.
+                                                 If no Zookeeper offset is found, the Kafka configuration kafka.consumer.auto.offset.reset
+                                                 defines how offsets are handled.
+                                                 Check `Kafka documentation <http://kafka.apache.org/documentation.html#newconsumerconfigs>`_ for details
+kafka.consumer.security.protocol    PLAINTEXT    Set to SASL_PLAINTEXT, SASL_SSL or SSL if writing to Kafka using some level of security. See below for additional info on secure setup.
+*more consumer security props*                   If using SASL_PLAINTEXT, SASL_SSL or SSL refer to `Kafka security <http://kafka.apache.org/documentation.html#security>`_ for additional
+                                                 properties that need to be set on consumer.
+Other Kafka Consumer Properties     --           These properties are used to configure the Kafka Consumer. Any consumer property supported
+                                                 by Kafka can be used. The only requirement is to prepend the property name with the prefix
+                                                 ``kafka.consumer``.
+                                                 For example: ``kafka.consumer.auto.offset.reset``
+==================================  ===========  ===================================================
 
 .. note:: The Kafka Source overrides two Kafka consumer parameters:
-          auto.commit.enable is set to "false" by the source and we commit every batch. For improved performance
-          this can be set to "true", however, this can lead to loss of data
-          consumer.timeout.ms is set to 10ms, so when we check Kafka for new data we wait at most 10ms for the data to arrive
-          setting this to a higher value can reduce CPU utilization (we'll poll Kafka in less of a tight loop), but also means
-          higher latency in writing batches to channel (since we'll wait longer for data to arrive).
+          auto.commit.enable is set to "false" by the source and every batch is committed. Kafka source guarantees at least once
+          strategy of messages retrieval. The duplicates can be present when the source starts.
+          The Kafka Source also provides defaults for the key.deserializer(org.apache.kafka.common.serialization.StringSerializer)
+          and value.deserializer(org.apache.kafka.common.serialization.ByteArraySerializer). Modification of these parameters is not recommended.
 
+Deprecated Properties
 
-Example for agent named tier1:
+===============================  ===================  =============================================================================================
+Property Name                    Default              Description
+===============================  ===================  =============================================================================================
+topic                            --                   Use kafka.topics
+groupId                          flume                Use kafka.consumer.group.id
+zookeeperConnect                 --                   Is no longer supported by kafka consumer client since 0.9.x. Use kafka.bootstrap.servers
+                                                      to establish connection with kafka cluster
+===============================  ===================  =============================================================================================
+
+Example for topic subscription by comma-separated topic list.
 
 .. code-block:: properties
 
     tier1.sources.source1.type = org.apache.flume.source.kafka.KafkaSource
     tier1.sources.source1.channels = channel1
-    tier1.sources.source1.zookeeperConnect = localhost:2181
-    tier1.sources.source1.topic = test1
-    tier1.sources.source1.groupId = flume
-    tier1.sources.source1.kafka.consumer.timeout.ms = 100
+    tier1.sources.source1.batchSize = 5000
+    tier1.sources.source1.batchDurationMillis = 2000
+    tier1.sources.source1.kafka.bootstrap.servers = localhost:9092
+    tier1.sources.source1.kafka.topics = test1, test2
+    tier1.sources.source1.kafka.consumer.group.id = custom.g.id
+
+Example for topic subscription by regex
+
+.. code-block:: properties
+
+    tier1.sources.source1.type = org.apache.flume.source.kafka.KafkaSource
+    tier1.sources.source1.channels = channel1
+    tier1.sources.source1.kafka.bootstrap.servers = localhost:9092
+    tier1.sources.source1.kafka.topics.regex = ^topic[0-9]$
+    # the default kafka.consumer.group.id=flume is used
 
 
+**Security and Kafka Source:**
+
+Secure authentication as well as data encryption is supported on the communication channel between Flume and Kafka.
+For secure authentication SASL/GSSAPI (Kerberos V5) or SSL (even though the parameter is named SSL, the actual protocol is a TLS implementation) can be used from Kafka version 0.9.0.
+
+As of now data encryption is solely provided by SSL/TLS.
+
+Setting ``kafka.consumer.security.protocol`` to any of the following value means:
+
+- **SASL_PLAINTEXT** - Kerberos or plaintext authentication with no data encryption
+- **SASL_SSL** - Kerberos or plaintext authentication with data encryption
+- **SSL** - TLS based encryption with optional authentication.
+
+.. warning::
+    There is a performance degradation when SSL is enabled,
+    the magnitude of which depends on the CPU type and the JVM implementation.
+    Reference: `Kafka security overview <http://kafka.apache.org/documentation#security_overview>`_
+    and the jira for tracking this issue:
+    `KAFKA-2561 <https://issues.apache.org/jira/browse/KAFKA-2561>`_
 
 
-NetCat Source
-~~~~~~~~~~~~~
+**TLS and Kafka Source:**
+
+Please read the steps described in `Configuring Kafka Clients SSL <http://kafka.apache.org/documentation#security_configclients>`_
+to learn about additional configuration settings for fine tuning for example any of the following:
+security provider, cipher suites, enabled protocols, truststore or keystore types.
+
+Example configuration with server side authentication and data encryption.
+
+.. code-block:: properties
+
+    a1.sources.source1.type = org.apache.flume.source.kafka.KafkaSource
+    a1.sources.source1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.sources.source1.kafka.topics = mytopic
+    a1.sources.source1.kafka.consumer.group.id = flume-consumer
+    a1.sources.source1.kafka.consumer.security.protocol = SSL
+    a1.sources.source1.kafka.consumer.ssl.truststore.location=/path/to/truststore.jks
+    a1.sources.source1.kafka.consumer.ssl.truststore.password=<password to access the truststore>
+
+
+Note: By default the property ``ssl.endpoint.identification.algorithm``
+is not defined, so hostname verification is not performed.
+In order to enable hostname verification, set the following properties
+
+.. code-block:: properties
+
+    a1.sources.source1.kafka.consumer.ssl.endpoint.identification.algorithm=HTTPS
+
+Once enabled, clients will verify the server's fully qualified domain name (FQDN)
+against one of the following two fields:
+
+#) Common Name (CN) https://tools.ietf.org/html/rfc6125#section-2.3
+#) Subject Alternative Name (SAN) https://tools.ietf.org/html/rfc5280#section-4.2.1.6
+
+If client side authentication is also required then additionally the following should be added to Flume agent configuration.
+Each Flume agent has to have its client certificate which has to be trusted by Kafka brokers either
+individually or by their signature chain. Common example is to sign each client certificate by a single Root CA
+which in turn is trusted by Kafka brokers.
+
+.. code-block:: properties
+
+    a1.sources.source1.kafka.consumer.ssl.keystore.location=/path/to/client.keystore.jks
+    a1.sources.source1.kafka.consumer.ssl.keystore.password=<password to access the keystore>
+
+If keystore and key use different password protection then ``ssl.key.password`` property will
+provide the required additional secret for both consumer keystores:
+
+.. code-block:: properties
+
+    a1.sources.source1.kafka.consumer.ssl.key.password=<password to access the key>
+
+
+**Kerberos and Kafka Source:**
+
+To use Kafka source with a Kafka cluster secured with Kerberos, set the ``consumer.security.protocol`` properties noted above for consumer.
+The Kerberos keytab and principal to be used with Kafka brokers is specified in a JAAS file's "KafkaClient" section. "Client" section describes the Zookeeper connection if needed.
+See `Kafka doc <http://kafka.apache.org/documentation.html#security_sasl_clientconfig>`_
+for information on the JAAS file contents. The location of this JAAS file and optionally the system wide kerberos configuration can be specified via JAVA_OPTS in flume-env.sh:
+
+.. code-block:: properties
+
+    JAVA_OPTS="$JAVA_OPTS -Djava.security.krb5.conf=/path/to/krb5.conf"
+    JAVA_OPTS="$JAVA_OPTS -Djava.security.auth.login.config=/path/to/flume_jaas.conf"
+
+Example secure configuration using SASL_PLAINTEXT:
+
+.. code-block:: properties
+
+    a1.sources.source1.type = org.apache.flume.source.kafka.KafkaSource
+    a1.sources.source1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.sources.source1.kafka.topics = mytopic
+    a1.sources.source1.kafka.consumer.group.id = flume-consumer
+    a1.sources.source1.kafka.consumer.security.protocol = SASL_PLAINTEXT
+    a1.sources.source1.kafka.consumer.sasl.mechanism = GSSAPI
+    a1.sources.source1.kafka.consumer.sasl.kerberos.service.name = kafka
+
+Example secure configuration using SASL_SSL:
+
+.. code-block:: properties
+
+    a1.sources.source1.type = org.apache.flume.source.kafka.KafkaSource
+    a1.sources.source1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.sources.source1.kafka.topics = mytopic
+    a1.sources.source1.kafka.consumer.group.id = flume-consumer
+    a1.sources.source1.kafka.consumer.security.protocol = SASL_SSL
+    a1.sources.source1.kafka.consumer.sasl.mechanism = GSSAPI
+    a1.sources.source1.kafka.consumer.sasl.kerberos.service.name = kafka
+    a1.sources.source1.kafka.consumer.ssl.truststore.location=/path/to/truststore.jks
+    a1.sources.source1.kafka.consumer.ssl.truststore.password=<password to access the truststore>
+
+
+Sample JAAS file. For reference of its content please see client config sections of the desired authentication mechanism (GSSAPI/PLAIN)
+in Kafka documentation of `SASL configuration <http://kafka.apache.org/documentation#security_sasl_clientconfig>`_.
+Since the Kafka Source may also connect to Zookeeper for offset migration, the "Client" section was also added to this example.
+This won't be needed unless you require offset migration, or you require this section for other secure components.
+Also please make sure that the operating system user of the Flume processes has read privileges on the jaas and keytab files.
+
+.. code-block:: javascript
+
+    Client {
+      com.sun.security.auth.module.Krb5LoginModule required
+      useKeyTab=true
+      storeKey=true
+      keyTab="/path/to/keytabs/flume.keytab"
+      principal="flume/flumehost1.example.com@YOURKERBEROSREALM";
+    };
+
+    KafkaClient {
+      com.sun.security.auth.module.Krb5LoginModule required
+      useKeyTab=true
+      storeKey=true
+      keyTab="/path/to/keytabs/flume.keytab"
+      principal="flume/flumehost1.example.com@YOURKERBEROSREALM";
+    };
+
+
+NetCat TCP Source
+~~~~~~~~~~~~~~~~~
 
 A netcat-like source that listens on a given port and turns each line of text
 into an event. Acts like ``nc -k -l [host] [port]``. In other words,
@@ -1274,27 +1515,64 @@ Example for agent named a1:
   a1.channels = c1
   a1.sources.r1.type = netcat
   a1.sources.r1.bind = 0.0.0.0
-  a1.sources.r1.bind = 6666
+  a1.sources.r1.port = 6666
+  a1.sources.r1.channels = c1
+
+NetCat UDP Source
+~~~~~~~~~~~~~~~~~
+
+As per the original Netcat (TCP) source, this source that listens on a given
+port and turns each line of text into an event and sent via the connected channel.
+Acts like ``nc -u -k -l [host] [port]``.
+
+Required properties are in **bold**.
+
+===================  ===========  ===========================================
+Property Name        Default      Description
+===================  ===========  ===========================================
+**channels**         --
+**type**             --           The component type name, needs to be ``netcatudp``
+**bind**             --           Host name or IP address to bind to
+**port**             --           Port # to bind to
+remoteAddressHeader  --
+selector.type        replicating  replicating or multiplexing
+selector.*                        Depends on the selector.type value
+interceptors         --           Space-separated list of interceptors
+interceptors.*
+===================  ===========  ===========================================
+
+Example for agent named a1:
+
+.. code-block:: properties
+
+  a1.sources = r1
+  a1.channels = c1
+  a1.sources.r1.type = netcatudp
+  a1.sources.r1.bind = 0.0.0.0
+  a1.sources.r1.port = 6666
   a1.sources.r1.channels = c1
 
 Sequence Generator Source
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A simple sequence generator that continuously generates events with a counter
-that starts from 0 and increments by 1. Useful mainly for testing.
-Required properties are in **bold**.
+A simple sequence generator that continuously generates events with a counter that starts from 0,
+increments by 1 and stops at totalEvents. Retries when it can't send events to the channel. Useful
+mainly for testing. During retries it keeps the body of the retried messages the same as before so
+that the number of unique events - after de-duplication at destination - is expected to be
+equal to the specified ``totalEvents``. Required properties are in **bold**.
 
-==============  ===========  ========================================
-Property Name   Default      Description
-==============  ===========  ========================================
+==============  ===============  ========================================
+Property Name   Default          Description
+==============  ===============  ========================================
 **channels**    --
-**type**        --           The component type name, needs to be ``seq``
-selector.type                replicating or multiplexing
-selector.*      replicating  Depends on the selector.type value
-interceptors    --           Space-separated list of interceptors
+**type**        --               The component type name, needs to be ``seq``
+selector.type                    replicating or multiplexing
+selector.*      replicating      Depends on the selector.type value
+interceptors    --               Space-separated list of interceptors
 interceptors.*
-batchSize       1
-==============  ===========  ========================================
+batchSize       1                Number of events to attempt to process per request loop.
+totalEvents     Long.MAX_VALUE   Number of unique events sent by the source.
+==============  ===============  ========================================
 
 Example for agent named a1:
 
@@ -1447,25 +1725,43 @@ unavailable status.
 All events sent in one post request are considered to be one batch and
 inserted into the channel in one transaction.
 
-=================  ============================================  =====================================================================================
-Property Name      Default                                       Description
-=================  ============================================  =====================================================================================
-**type**                                                         The component type name, needs to be ``http``
-**port**           --                                            The port the source should bind to.
-bind               0.0.0.0                                       The hostname or IP address to listen on
-handler            ``org.apache.flume.source.http.JSONHandler``  The FQCN of the handler class.
-handler.*          --                                            Config parameters for the handler
-selector.type      replicating                                   replicating or multiplexing
-selector.*                                                       Depends on the selector.type value
-interceptors       --                                            Space-separated list of interceptors
-interceptors.*
-enableSSL          false                                         Set the property true, to enable SSL. *HTTP Source does not support SSLv3.*
-excludeProtocols   SSLv3                                         Space-separated list of SSL/TLS protocols to exclude. SSLv3 is always excluded.
-keystore                                                         Location of the keystore includng keystore file name
-keystorePassword                                                 Keystore password
-======================================================================================================================================================
+This source is based on Jetty 9.4 and offers the ability to set additional
+Jetty-specific parameters which will be passed directly to the Jetty components.
 
-For example, a http source for agent named a1:
+====================  ============================================  =====================================================================================
+Property Name         Default                                       Description
+====================  ============================================  =====================================================================================
+**type**                                                            The component type name, needs to be ``http``
+**port**              --                                            The port the source should bind to.
+bind                  0.0.0.0                                       The hostname or IP address to listen on
+handler               ``org.apache.flume.source.http.JSONHandler``  The FQCN of the handler class.
+handler.*             --                                            Config parameters for the handler
+selector.type         replicating                                   replicating or multiplexing
+selector.*                                                          Depends on the selector.type value
+interceptors          --                                            Space-separated list of interceptors
+interceptors.*
+enableSSL             false                                         Set the property true, to enable SSL. *HTTP Source does not support SSLv3.*
+excludeProtocols      SSLv3                                         Space-separated list of SSL/TLS protocols to exclude. SSLv3 is always excluded.
+keystore                                                            Location of the keystore includng keystore file name
+keystorePassword                                                    Keystore password
+QueuedThreadPool.*                                                  Jetty specific settings to be set on org.eclipse.jetty.util.thread.QueuedThreadPool.
+                                                                    N.B. QueuedThreadPool will only be used if at least one property of this class is set.
+HttpConfiguration.*                                                 Jetty specific settings to be set on org.eclipse.jetty.server.HttpConfiguration
+SslContextFactory.*                                                 Jetty specific settings to be set on org.eclipse.jetty.util.ssl.SslContextFactory (only
+                                                                    applicable when *enableSSL* is set to true).
+ServerConnector.*                                                   Jetty specific settings to be set on org.eclipse.jetty.server.ServerConnector
+=========================================================================================================================================================
+
+N.B. Jetty-specific settings are set using the setter-methods on the objects listed above. For full details see the Javadoc for these classes
+(`QueuedThreadPool <http://www.eclipse.org/jetty/javadoc/9.4.6.v20170531/org/eclipse/jetty/util/thread/QueuedThreadPool.html>`_,
+`HttpConfiguration <http://www.eclipse.org/jetty/javadoc/9.4.6.v20170531/org/eclipse/jetty/server/HttpConfiguration.html>`_,
+`SslContextFactory <http://www.eclipse.org/jetty/javadoc/9.4.6.v20170531/org/eclipse/jetty/util/ssl/SslContextFactory.html>`_ and
+`ServerConnector <http://www.eclipse.org/jetty/javadoc/9.4.6.v20170531/org/eclipse/jetty/server/ServerConnector.html>`_).
+
+When using Jetty-specific setings, named properites above will take precedence (for example excludeProtocols will take
+precedence over SslContextFactory.ExcludeProtocols). All properties will be inital lower case.
+
+An example http source for agent named a1:
 
 .. code-block:: properties
 
@@ -1476,6 +1772,8 @@ For example, a http source for agent named a1:
   a1.sources.r1.channels = c1
   a1.sources.r1.handler = org.example.rest.RestHandler
   a1.sources.r1.handler.nickname = random props
+  a1.sources.r1.HttpConfiguration.sendServerVersion = false
+  a1.sources.r1.ServerConnector.idleTimeout = 300
 
 JSONHandler
 '''''''''''
@@ -1713,34 +2011,39 @@ required.
 
 The following are the escape sequences supported:
 
-=========  =================================================
-Alias      Description
-=========  =================================================
-%{host}    Substitute value of event header named "host". Arbitrary header names are supported.
-%t         Unix time in milliseconds
-%a         locale's short weekday name (Mon, Tue, ...)
-%A         locale's full weekday name (Monday, Tuesday, ...)
-%b         locale's short month name (Jan, Feb, ...)
-%B         locale's long month name (January, February, ...)
-%c         locale's date and time (Thu Mar 3 23:05:25 2005)
-%d         day of month (01)
-%e         day of month without padding (1)
-%D         date; same as %m/%d/%y
-%H         hour (00..23)
-%I         hour (01..12)
-%j         day of year (001..366)
-%k         hour ( 0..23)
-%m         month (01..12)
-%n         month without padding (1..12)
-%M         minute (00..59)
-%p         locale's equivalent of am or pm
-%s         seconds since 1970-01-01 00:00:00 UTC
-%S         second (00..59)
-%y         last two digits of year (00..99)
-%Y         year (2010)
-%z         +hhmm numeric timezone (for example, -0400)
-=========  =================================================
+===============  =================================================
+Alias            Description
+===============  =================================================
+%{host}          Substitute value of event header named "host". Arbitrary header names are supported.
+%t               Unix time in milliseconds
+%a               locale's short weekday name (Mon, Tue, ...)
+%A               locale's full weekday name (Monday, Tuesday, ...)
+%b               locale's short month name (Jan, Feb, ...)
+%B               locale's long month name (January, February, ...)
+%c               locale's date and time (Thu Mar 3 23:05:25 2005)
+%d               day of month (01)
+%e               day of month without padding (1)
+%D               date; same as %m/%d/%y
+%H               hour (00..23)
+%I               hour (01..12)
+%j               day of year (001..366)
+%k               hour ( 0..23)
+%m               month (01..12)
+%n               month without padding (1..12)
+%M               minute (00..59)
+%p               locale's equivalent of am or pm
+%s               seconds since 1970-01-01 00:00:00 UTC
+%S               second (00..59)
+%y               last two digits of year (00..99)
+%Y               year (2010)
+%z               +hhmm numeric timezone (for example, -0400)
+%[localhost]     Substitute the hostname of the host where the agent is running
+%[IP]            Substitute the IP address of the host where the agent is running
+%[FQDN]          Substitute the canonical hostname of the host where the agent is running
+===============  =================================================
 
+Note: The escape strings %[localhost], %[IP] and %[FQDN] all rely on Java's ability to obtain the
+hostname, which may fail in some networking environments.
 
 The file in use will have the name mangled to include ".tmp" at the end. Once
 the file is closed, this extension is removed. This allows excluding partially
@@ -1775,7 +2078,7 @@ hdfs.fileType           SequenceFile  File format: currently ``SequenceFile``, `
                                       (2)CompressedStream requires set hdfs.codeC with an available codeC
 hdfs.maxOpenFiles       5000          Allow only this number of open files. If this number is exceeded, the oldest file is closed.
 hdfs.minBlockReplicas   --            Specify minimum number of replicas per HDFS block. If not specified, it comes from the default Hadoop config in the classpath.
-hdfs.writeFormat        --            Format for sequence file records. One of "Text" or "Writable" (the default).
+hdfs.writeFormat        Writable      Format for sequence file records. One of ``Text`` or ``Writable``. Set to ``Text`` before creating data files with Flume, otherwise those files cannot be read by either Apache Impala (incubating) or Apache Hive.
 hdfs.callTimeout        10000         Number of milliseconds allowed for HDFS operations, such as open, write, flush, close.
                                       This number should be increased if many HDFS timeout operations are occurring.
 hdfs.threadsPoolSize    10            Number of threads per HDFS sink for HDFS IO ops (open, write, etc.)
@@ -1826,8 +2129,7 @@ This sink streams events containing delimited text or JSON data directly into a 
 Events are written using Hive transactions. As soon as a set of events are committed to Hive, they become
 immediately visible to Hive queries. Partitions to which flume will stream to can either be pre-created
 or, optionally, Flume can create them if they are missing. Fields from incoming event data are mapped to
-corresponding columns in the Hive table. **This sink is provided as a preview feature and not recommended
-for use in production.**
+corresponding columns in the Hive table.
 
 ======================    ============  ======================================================================
 Name                      Default       Description
@@ -1965,8 +2267,9 @@ accept tab separated input containing three fields and to skip the second field.
 Logger Sink
 ~~~~~~~~~~~
 
-Logs event at INFO level. Typically useful for testing/debugging purpose.
-Required properties are in **bold**.
+Logs event at INFO level. Typically useful for testing/debugging purpose. Required properties are
+in **bold**. This sink is the only exception which doesn't require the extra configuration
+explained in the `Logging raw data`_ section.
 
 ==============  =======  ===========================================
 Property Name   Default  Description
@@ -2118,16 +2421,19 @@ File Roll Sink
 Stores events on the local filesystem.
 Required properties are in **bold**.
 
-===================  =======  ======================================================================================================================
-Property Name        Default  Description
-===================  =======  ======================================================================================================================
-**channel**          --
-**type**             --       The component type name, needs to be ``file_roll``.
-**sink.directory**   --       The directory where files will be stored
-sink.rollInterval    30       Roll the file every 30 seconds. Specifying 0 will disable rolling and cause all events to be written to a single file.
-sink.serializer      TEXT     Other possible options include ``avro_event`` or the FQCN of an implementation of EventSerializer.Builder interface.
-batchSize            100
-===================  =======  ======================================================================================================================
+==========================  =======  ======================================================================================================================
+Property Name               Default  Description
+==========================  =======  ======================================================================================================================
+**channel**                 --
+**type**                    --       The component type name, needs to be ``file_roll``.
+**sink.directory**          --       The directory where files will be stored
+sink.pathManager            DEFAULT  The PathManager implementation to use.
+sink.pathManager.extension  --       The file extension if the default PathManager is used.
+sink.pathManager.prefix     --       A character string to add to the beginning of the file name if the default PathManager is used
+sink.rollInterval           30       Roll the file every 30 seconds. Specifying 0 will disable rolling and cause all events to be written to a single file.
+sink.serializer             TEXT     Other possible options include ``avro_event`` or the FQCN of an implementation of EventSerializer.Builder interface.
+batchSize                   100
+==========================  =======  ======================================================================================================================
 
 Example for agent named a1:
 
@@ -2254,6 +2560,10 @@ timeout              60000                                                      
                                                                                    all events in a transaction.
 serializer           org.apache.flume.sink.hbase.SimpleAsyncHbaseEventSerializer
 serializer.*         --                                                            Properties to be passed to the serializer.
+async.*              --                                                            Properties to be passed to asyncHbase library.
+                                                                                   These properties have precedence over the old ``zookeeperQuorum`` and ``znodeParent`` values.
+                                                                                   You can find the list of the available properties at
+                                                                                   `the documentation page of AsyncHBase <http://opentsdb.github.io/asynchbase/docs/build/html/configuration.html#properties>`_.
 ===================  ============================================================  ====================================================================================
 
 Note that this sink takes the Zookeeper Quorum and parent znode information in
@@ -2283,19 +2593,19 @@ This sink extracts data from Flume events, transforms it, and loads it in near-r
 
 This sink is well suited for use cases that stream raw data into HDFS (via the HdfsSink) and simultaneously extract, transform and load the same data into Solr (via MorphlineSolrSink). In particular, this sink can process arbitrary heterogeneous raw data from disparate data sources and turn it into a data model that is useful to Search applications.
 
-The ETL functionality is customizable using a `morphline configuration file <http://cloudera.github.io/cdk/docs/current/cdk-morphlines/index.html>`_ that defines a chain of transformation commands that pipe event records from one command to another. 
+The ETL functionality is customizable using a `morphline configuration file <http://cloudera.github.io/cdk/docs/current/cdk-morphlines/index.html>`_ that defines a chain of transformation commands that pipe event records from one command to another.
 
 Morphlines can be seen as an evolution of Unix pipelines where the data model is generalized to work with streams of generic records, including arbitrary binary payloads. A morphline command is a bit like a Flume Interceptor. Morphlines can be embedded into Hadoop components such as Flume.
 
 Commands to parse and transform a set of standard data formats such as log files, Avro, CSV, Text, HTML, XML, PDF, Word, Excel, etc. are provided out of the box, and additional custom commands and parsers for additional data formats can be added as morphline plugins. Any kind of data format can be indexed and any Solr documents for any kind of Solr schema can be generated, and any custom ETL logic can be registered and executed.
 
-Morphlines manipulate continuous streams of records. The data model can be described as follows: A record is a set of named fields where each field has an ordered list of one or more values. A value can be any Java Object. That is, a record is essentially a hash table where each hash table entry contains a String key and a list of Java Objects as values. (The implementation uses Guava's ``ArrayListMultimap``, which is a ``ListMultimap``). Note that a field can have multiple values and any two records need not use common field names. 
+Morphlines manipulate continuous streams of records. The data model can be described as follows: A record is a set of named fields where each field has an ordered list of one or more values. A value can be any Java Object. That is, a record is essentially a hash table where each hash table entry contains a String key and a list of Java Objects as values. (The implementation uses Guava's ``ArrayListMultimap``, which is a ``ListMultimap``). Note that a field can have multiple values and any two records need not use common field names.
 
 This sink fills the body of the Flume event into the ``_attachment_body`` field of the morphline record, as well as copies the headers of the Flume event into record fields of the same name. The commands can then act on this data.
 
 Routing to a SolrCloud cluster is supported to improve scalability. Indexing load can be spread across a large number of MorphlineSolrSinks for improved scalability. Indexing load can be replicated across multiple MorphlineSolrSinks for high availability, for example using Flume features such as Load balancing Sink Processor. MorphlineInterceptor can also help to implement dynamic routing to multiple Solr collections (e.g. for multi-tenancy).
 
-The morphline and solr jars required for your environment must be placed in the lib directory of the Apache Flume installation. 
+The morphline and solr jars required for your environment must be placed in the lib directory of the Apache Flume installation.
 
 The type is the FQCN: org.apache.flume.sink.solr.morphline.MorphlineSolrSink
 
@@ -2333,11 +2643,11 @@ ElasticSearchSink
 ~~~~~~~~~~~~~~~~~
 
 This sink writes data to an elasticsearch cluster. By default, events will be written so that the `Kibana <http://kibana.org>`_ graphical interface
-can display them - just as if `logstash <https://logstash.net>`_ wrote them. 
+can display them - just as if `logstash <https://logstash.net>`_ wrote them.
 
-The elasticsearch and lucene-core jars required for your environment must be placed in the lib directory of the Apache Flume installation. 
+The elasticsearch and lucene-core jars required for your environment must be placed in the lib directory of the Apache Flume installation.
 Elasticsearch requires that the major version of the client JAR match that of the server and that both are running the same minor version
-of the JVM. SerializationExceptions will appear if this is incorrect. To 
+of the JVM. SerializationExceptions will appear if this is incorrect. To
 select the required version first determine the version of elasticsearch and the JVM version the target cluster is running. Then select an elasticsearch client
 library which matches the major version. A 0.19.x client can talk to a 0.19.x cluster; 0.20.x can talk to 0.20.x and 0.90.x can talk to 0.90.x. Once the
 elasticsearch version has been determined then read the pom.xml file to determine the correct lucene-core JAR version to use. The Flume agent
@@ -2469,52 +2779,285 @@ Kafka Sink
 This is a Flume Sink implementation that can publish data to a
 `Kafka <http://kafka.apache.org/>`_ topic. One of the objective is to integrate Flume
 with Kafka so that pull based processing systems can process the data coming
-through various Flume sources. This currently supports Kafka 0.8.x series of releases.
+through various Flume sources. This currently supports Kafka 0.9.x series of releases.
+
+This version of Flume no longer supports Older Versions (0.8.x) of Kafka.
 
 Required properties are marked in bold font.
 
 
-===============================  ===================  =============================================================================================
-Property Name                    Default              Description
-===============================  ===================  =============================================================================================
-**type**                         --                   Must be set to ``org.apache.flume.sink.kafka.KafkaSink``
-**brokerList**                   --                   List of brokers Kafka-Sink will connect to, to get the list of topic partitions
-                                                      This can be a partial list of brokers, but we recommend at least two for HA.
-                                                      The format is comma separated list of hostname:port
-topic                            default-flume-topic  The topic in Kafka to which the messages will be published. If this parameter is configured,
-                                                      messages will be published to this topic.
-                                                      If the event header contains a "topic" field, the event will be published to that topic
-                                                      overriding the topic configured here.
-batchSize                        100                  How many messages to process in one batch. Larger batches improve throughput while adding latency.
-requiredAcks                     1                    How many replicas must acknowledge a message before its considered successfully written.
-                                                      Accepted values are 0 (Never wait for acknowledgement), 1 (wait for leader only), -1 (wait for all replicas)
-                                                      Set this to -1 to avoid data loss in some cases of leader failure.
-Other Kafka Producer Properties  --                   These properties are used to configure the Kafka Producer. Any producer property supported
-                                                      by Kafka can be used. The only requirement is to prepend the property name with the prefix ``kafka.``.
-                                                      For example: kafka.producer.type
-===============================  ===================  =============================================================================================
+==================================  ===================  =============================================================================================
+Property Name                       Default              Description
+==================================  ===================  =============================================================================================
+**type**                            --                   Must be set to ``org.apache.flume.sink.kafka.KafkaSink``
+**kafka.bootstrap.servers**         --                   List of brokers Kafka-Sink will connect to, to get the list of topic partitions
+                                                         This can be a partial list of brokers, but we recommend at least two for HA.
+                                                         The format is comma separated list of hostname:port
+kafka.topic                         default-flume-topic  The topic in Kafka to which the messages will be published. If this parameter is configured,
+                                                         messages will be published to this topic.
+                                                         If the event header contains a "topic" field, the event will be published to that topic
+                                                         overriding the topic configured here.
+                                                         Arbitrary header substitution is supported, eg. %{header} is replaced with value of event header named "header".
+                                                         (If using the substitution, it is recommended to set "auto.create.topics.enable" property of Kafka broker to true.)
+flumeBatchSize                      100                  How many messages to process in one batch. Larger batches improve throughput while adding latency.
+kafka.producer.acks                 1                    How many replicas must acknowledge a message before its considered successfully written.
+                                                         Accepted values are 0 (Never wait for acknowledgement), 1 (wait for leader only), -1 (wait for all replicas)
+                                                         Set this to -1 to avoid data loss in some cases of leader failure.
+useFlumeEventFormat                 false                By default events are put as bytes onto the Kafka topic directly from the event body. Set to
+                                                         true to store events as the Flume Avro binary format. Used in conjunction with the same property
+                                                         on the KafkaSource or with the parseAsFlumeEvent property on the Kafka Channel this will preserve
+                                                         any Flume headers for the producing side.
+defaultPartitionId                  --                   Specifies a Kafka partition ID (integer) for all events in this channel to be sent to, unless
+                                                         overriden by ``partitionIdHeader``. By default, if this property is not set, events will be
+                                                         distributed by the Kafka Producer's partitioner - including by ``key`` if specified (or by a
+                                                         partitioner specified by ``kafka.partitioner.class``).
+partitionIdHeader                   --                   When set, the sink will take the value of the field named using the value of this property
+                                                         from the event header and send the message to the specified partition of the topic. If the
+                                                         value represents an invalid partition, an EventDeliveryException will be thrown. If the header value
+                                                         is present then this setting overrides ``defaultPartitionId``.
+allowTopicOverride                  true                 When set, the sink will allow a message to be produced into a topic specified by the ``topicHeader`` property (if provided).
+topicHeader                         topic                When set in conjunction with ``allowTopicOverride`` will produce a message into the value of the header named using the value of this property.
+                                                         Care should be taken when using in conjunction with the Kafka Source ``topicHeader`` property to avoid creating a loopback.
+kafka.producer.security.protocol    PLAINTEXT            Set to SASL_PLAINTEXT, SASL_SSL or SSL if writing to Kafka using some level of security. See below for additional info on secure setup.
+*more producer security props*                           If using SASL_PLAINTEXT, SASL_SSL or SSL refer to `Kafka security <http://kafka.apache.org/documentation.html#security>`_ for additional
+                                                         properties that need to be set on producer.
+Other Kafka Producer Properties     --                   These properties are used to configure the Kafka Producer. Any producer property supported
+                                                         by Kafka can be used. The only requirement is to prepend the property name with the prefix
+                                                         ``kafka.producer``.
+                                                         For example: kafka.producer.linger.ms
+==================================  ===================  =============================================================================================
 
 .. note::   Kafka Sink uses the ``topic`` and ``key`` properties from the FlumeEvent headers to send events to Kafka.
             If ``topic`` exists in the headers, the event will be sent to that specific topic, overriding the topic configured for the Sink.
             If ``key`` exists in the headers, the key will used by Kafka to partition the data between the topic partitions. Events with same key
             will be sent to the same partition. If the key is null, events will be sent to random partitions.
 
+The Kafka sink also provides defaults for the key.serializer(org.apache.kafka.common.serialization.StringSerializer)
+and value.serializer(org.apache.kafka.common.serialization.ByteArraySerializer). Modification of these parameters is not recommended.
+
+Deprecated Properties
+
+===============================  ===================  =============================================================================================
+Property Name                    Default              Description
+===============================  ===================  =============================================================================================
+brokerList                       --                   Use kafka.bootstrap.servers
+topic                            default-flume-topic  Use kafka.topic
+batchSize                        100                  Use kafka.flumeBatchSize
+requiredAcks                     1                    Use kafka.producer.acks
+
+===============================  ===================  =============================================================================================
+
 An example configuration of a Kafka sink is given below. Properties starting
-with the prefix ``kafka`` (the last 3 properties) are used when instantiating
-the Kafka producer. The properties that are passed when creating the Kafka
+with the prefix ``kafka.producer`` the Kafka producer. The properties that are passed when creating the Kafka
 producer are not limited to the properties given in this example.
-Also it's possible include your custom properties here and access them inside
+Also it is possible to include your custom properties here and access them inside
 the preprocessor through the Flume Context object passed in as a method
 argument.
 
 .. code-block:: properties
 
-    a1.sinks.k1.type = org.apache.flume.sink.kafka.KafkaSink
-    a1.sinks.k1.topic = mytopic
-    a1.sinks.k1.brokerList = localhost:9092
-    a1.sinks.k1.requiredAcks = 1
-    a1.sinks.k1.batchSize = 20
     a1.sinks.k1.channel = c1
+    a1.sinks.k1.type = org.apache.flume.sink.kafka.KafkaSink
+    a1.sinks.k1.kafka.topic = mytopic
+    a1.sinks.k1.kafka.bootstrap.servers = localhost:9092
+    a1.sinks.k1.kafka.flumeBatchSize = 20
+    a1.sinks.k1.kafka.producer.acks = 1
+    a1.sinks.k1.kafka.producer.linger.ms = 1
+    a1.sinks.k1.kafka.producer.compression.type = snappy
+
+
+**Security and Kafka Sink:**
+
+Secure authentication as well as data encryption is supported on the communication channel between Flume and Kafka.
+For secure authentication SASL/GSSAPI (Kerberos V5) or SSL (even though the parameter is named SSL, the actual protocol is a TLS implementation) can be used from Kafka version 0.9.0.
+
+As of now data encryption is solely provided by SSL/TLS.
+
+Setting ``kafka.producer.security.protocol`` to any of the following value means:
+
+- **SASL_PLAINTEXT** - Kerberos or plaintext authentication with no data encryption
+- **SASL_SSL** - Kerberos or plaintext authentication with data encryption
+- **SSL** - TLS based encryption with optional authentication.
+
+.. warning::
+    There is a performance degradation when SSL is enabled,
+    the magnitude of which depends on the CPU type and the JVM implementation.
+    Reference: `Kafka security overview <http://kafka.apache.org/documentation#security_overview>`_
+    and the jira for tracking this issue:
+    `KAFKA-2561 <https://issues.apache.org/jira/browse/KAFKA-2561>`__
+
+
+**TLS and Kafka Sink:**
+
+Please read the steps described in `Configuring Kafka Clients SSL <http://kafka.apache.org/documentation#security_configclients>`_
+to learn about additional configuration settings for fine tuning for example any of the following:
+security provider, cipher suites, enabled protocols, truststore or keystore types.
+
+Example configuration with server side authentication and data encryption.
+
+.. code-block:: properties
+
+    a1.sinks.sink1.type = org.apache.flume.sink.kafka.KafkaSink
+    a1.sinks.sink1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.sinks.sink1.kafka.topic = mytopic
+    a1.sinks.sink1.kafka.producer.security.protocol = SSL
+    a1.sinks.sink1.kafka.producer.ssl.truststore.location = /path/to/truststore.jks
+    a1.sinks.sink1.kafka.producer.ssl.truststore.password = <password to access the truststore>
+
+
+Note: By default the property ``ssl.endpoint.identification.algorithm``
+is not defined, so hostname verification is not performed.
+In order to enable hostname verification, set the following properties
+
+.. code-block:: properties
+
+    a1.sinks.sink1.kafka.producer.ssl.endpoint.identification.algorithm = HTTPS
+
+Once enabled, clients will verify the server's fully qualified domain name (FQDN)
+against one of the following two fields:
+
+#) Common Name (CN) https://tools.ietf.org/html/rfc6125#section-2.3
+#) Subject Alternative Name (SAN) https://tools.ietf.org/html/rfc5280#section-4.2.1.6
+
+If client side authentication is also required then additionally the following should be added to Flume agent configuration.
+Each Flume agent has to have its client certificate which has to be trusted by Kafka brokers either
+individually or by their signature chain. Common example is to sign each client certificate by a single Root CA
+which in turn is trusted by Kafka brokers.
+
+.. code-block:: properties
+
+    a1.sinks.sink1.kafka.producer.ssl.keystore.location = /path/to/client.keystore.jks
+    a1.sinks.sink1.kafka.producer.ssl.keystore.password = <password to access the keystore>
+
+If keystore and key use different password protection then ``ssl.key.password`` property will
+provide the required additional secret for producer keystore:
+
+.. code-block:: properties
+
+    a1.sinks.sink1.kafka.producer.ssl.key.password = <password to access the key>
+
+
+**Kerberos and Kafka Sink:**
+
+To use Kafka sink with a Kafka cluster secured with Kerberos, set the ``producer.security.protocol`` property noted above for producer.
+The Kerberos keytab and principal to be used with Kafka brokers is specified in a JAAS file's "KafkaClient" section. "Client" section describes the Zookeeper connection if needed.
+See `Kafka doc <http://kafka.apache.org/documentation.html#security_sasl_clientconfig>`_
+for information on the JAAS file contents. The location of this JAAS file and optionally the system wide kerberos configuration can be specified via JAVA_OPTS in flume-env.sh:
+
+.. code-block:: properties
+
+    JAVA_OPTS="$JAVA_OPTS -Djava.security.krb5.conf=/path/to/krb5.conf"
+    JAVA_OPTS="$JAVA_OPTS -Djava.security.auth.login.config=/path/to/flume_jaas.conf"
+
+Example secure configuration using SASL_PLAINTEXT:
+
+.. code-block:: properties
+
+    a1.sinks.sink1.type = org.apache.flume.sink.kafka.KafkaSink
+    a1.sinks.sink1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.sinks.sink1.kafka.topic = mytopic
+    a1.sinks.sink1.kafka.producer.security.protocol = SASL_PLAINTEXT
+    a1.sinks.sink1.kafka.producer.sasl.mechanism = GSSAPI
+    a1.sinks.sink1.kafka.producer.sasl.kerberos.service.name = kafka
+
+
+Example secure configuration using SASL_SSL:
+
+.. code-block:: properties
+
+    a1.sinks.sink1.type = org.apache.flume.sink.kafka.KafkaSink
+    a1.sinks.sink1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.sinks.sink1.kafka.topic = mytopic
+    a1.sinks.sink1.kafka.producer.security.protocol = SASL_SSL
+    a1.sinks.sink1.kafka.producer.sasl.mechanism = GSSAPI
+    a1.sinks.sink1.kafka.producer.sasl.kerberos.service.name = kafka
+    a1.sinks.sink1.kafka.producer.ssl.truststore.location = /path/to/truststore.jks
+    a1.sinks.sink1.kafka.producer.ssl.truststore.password = <password to access the truststore>
+
+
+Sample JAAS file. For reference of its content please see client config sections of the desired authentication mechanism (GSSAPI/PLAIN)
+in Kafka documentation of `SASL configuration <http://kafka.apache.org/documentation#security_sasl_clientconfig>`_.
+Unlike the Kafka Source or Kafka Channel a "Client" section is not required, unless it is needed by other connecting components. Also please make sure
+that the operating system user of the Flume processes has read privileges on the jaas and keytab files.
+
+.. code-block:: javascript
+
+    KafkaClient {
+      com.sun.security.auth.module.Krb5LoginModule required
+      useKeyTab=true
+      storeKey=true
+      keyTab="/path/to/keytabs/flume.keytab"
+      principal="flume/flumehost1.example.com@YOURKERBEROSREALM";
+    };
+
+
+HTTP Sink
+~~~~~~~~~
+
+Behaviour of this sink is that it will take events from the channel, and
+send those events to a remote service using an HTTP POST request. The event
+content is sent as the POST body.
+
+Error handling behaviour of this sink depends on the HTTP response returned
+by the target server. The sink backoff/ready status is configurable, as is the
+transaction commit/rollback result and whether the event contributes to the
+successful event drain count.
+
+Any malformed HTTP response returned by the server where the status code is
+not readable will result in a backoff signal and the event is not consumed
+from the channel.
+
+Required properties are in **bold**.
+
+========================== ================= ===========================================================================================
+Property Name              Default           Description
+========================== ================= ===========================================================================================
+**channel**                --
+**type**                   --                The component type name, needs to be ``http``.
+**endpoint**               --                The fully qualified URL endpoint to POST to
+connectTimeout             5000              The socket connection timeout in milliseconds
+requestTimeout             5000              The maximum request processing time in milliseconds
+contentTypeHeader          text/plain        The HTTP Content-Type header
+acceptHeader               text/plain        The HTTP Accept header value
+defaultBackoff             true              Whether to backoff by default on receiving all HTTP status codes
+defaultRollback            true              Whether to rollback by default on receiving all HTTP status codes
+defaultIncrementMetrics    false             Whether to increment metrics by default on receiving all HTTP status codes
+backoff.CODE               --                Configures a specific backoff for an individual (i.e. 200) code or a group (i.e. 2XX) code
+rollback.CODE              --                Configures a specific rollback for an individual (i.e. 200) code or a group (i.e. 2XX) code
+incrementMetrics.CODE      --                Configures a specific metrics increment for an individual (i.e. 200) code or a group (i.e. 2XX) code
+========================== ================= ===========================================================================================
+
+Note that the most specific HTTP status code match is used for the backoff,
+rollback and incrementMetrics configuration options. If there are configuration
+values for both 2XX and 200 status codes, then 200 HTTP codes will use the 200
+value, and all other HTTP codes in the 201-299 range will use the 2XX value.
+
+Any empty or null events are consumed without any request being made to the
+HTTP endpoint.
+
+Example for agent named a1:
+
+.. code-block:: properties
+
+  a1.channels = c1
+  a1.sinks = k1
+  a1.sinks.k1.type = http
+  a1.sinks.k1.channel = c1
+  a1.sinks.k1.endpoint = http://localhost:8080/someuri
+  a1.sinks.k1.connectTimeout = 2000
+  a1.sinks.k1.requestTimeout = 2000
+  a1.sinks.k1.acceptHeader = application/json
+  a1.sinks.k1.contentTypeHeader = application/json
+  a1.sinks.k1.defaultBackoff = true
+  a1.sinks.k1.defaultRollback = true
+  a1.sinks.k1.defaultIncrementMetrics = false
+  a1.sinks.k1.backoff.4XX = false
+  a1.sinks.k1.rollback.4XX = false
+  a1.sinks.k1.incrementMetrics.4XX = true
+  a1.sinks.k1.backoff.200 = false
+  a1.sinks.k1.rollback.200 = false
+  a1.sinks.k1.incrementMetrics.200 = true
+
 
 Custom Sink
 ~~~~~~~~~~~
@@ -2587,7 +3130,7 @@ Example for agent named a1:
   a1.channels.c1.transactionCapacity = 10000
   a1.channels.c1.byteCapacityBufferPercentage = 20
   a1.channels.c1.byteCapacity = 800000
-  
+
 
 JDBC Channel
 ~~~~~~~~~~~~
@@ -2632,40 +3175,82 @@ The events are stored in a Kafka cluster (must be installed separately). Kafka p
 replication, so in case an agent or a kafka broker crashes, the events are immediately available to other sinks
 
 The Kafka channel can be used for multiple scenarios:
-* With Flume source and sink - it provides a reliable and highly available channel for events
-* With Flume source and interceptor but no sink - it allows writing Flume events into a Kafka topic, for use by other apps
-* With Flume sink, but no source - it is a low-latency, fault tolerant way to send events from Kafka to Flume sources such as HDFS, HBase or Solr
+
+#. With Flume source and sink - it provides a reliable and highly available channel for events
+#. With Flume source and interceptor but no sink - it allows writing Flume events into a Kafka topic, for use by other apps
+#. With Flume sink, but no source - it is a low-latency, fault tolerant way to send events from Kafka to Flume sinks such as HDFS, HBase or Solr
+
+
+This version of Flume requires Kafka version 0.9 or greater due to the reliance on the Kafka clients shipped with that version. The configuration of
+the channel has changed compared to previous flume versions.
+
+The configuration parameters are organized as such:
+
+#. Configuration values related to the channel generically are applied at the channel config level, eg: a1.channel.k1.type =
+#. Configuration values related to Kafka or how the Channel operates are prefixed with "kafka.", (this are analgous to CommonClient Configs) eg: a1.channels.k1.kafka.topic and a1.channels.k1.kafka.bootstrap.servers. This is not dissimilar to how the hdfs sink operates
+#. Properties specific to the producer/consumer are prefixed by kafka.producer or kafka.consumer
+#. Where possible, the Kafka paramter names are used, eg: bootstrap.servers and acks
+
+This version of flume is backwards-compatible with previous versions, however deprecated properties are indicated in the table below and a warning message
+is logged on startup when they are present in the configuration file.
 
 Required properties are in **bold**.
 
-======================  ==========================  ===============================================================================================================
-Property Name           Default                           Description
-======================  ==========================  ===============================================================================================================
-**type**                --                          The component type name, needs to be ``org.apache.flume.channel.kafka.KafkaChannel``
-**brokerList**          --                          List of brokers in the Kafka cluster used by the channel
-                                                    This can be a partial list of brokers, but we recommend at least two for HA.
-                                                    The format is comma separated list of hostname:port
-**zookeeperConnect**    --                          URI of ZooKeeper used by Kafka cluster
-                                                    The format is comma separated list of hostname:port. If chroot is used, it is added once at the end.
-                                                    For example: zookeeper-1:2181,zookeeper-2:2182,zookeeper-3:2181/kafka
-topic                   flume-channel               Kafka topic which the channel will use
-groupId                 flume                       Consumer group ID the channel uses to register with Kafka.
-                                                    Multiple channels must use the same topic and group to ensure that when one agent fails another can get the data
-                                                    Note that having non-channel consumers with the same ID can lead to data loss.
-parseAsFlumeEvent       true                        Expecting Avro datums with FlumeEvent schema in the channel.
-                                                    This should be true if Flume source is writing to the channel
-                                                    And false if other producers are writing into the topic that the channel is using
-                                                    Flume source messages to Kafka can be parsed outside of Flume by using
-                                                    org.apache.flume.source.avro.AvroFlumeEvent provided by the flume-ng-sdk artifact
-readSmallestOffset      false                       When set to true, the channel will read all data in the topic, starting from the oldest event
-                                                    when false, it will read only events written after the channel started
-                                                    When "parseAsFlumeEvent" is true, this will be false. Flume source will start prior to the sinks and this
-                                                    guarantees that events sent by source before sinks start will not be lost.
-Other Kafka Properties  --                          These properties are used to configure the Kafka Producer and Consumer used by the channel.
-                                                    Any property supported by Kafka can be used.
-                                                    The only requirement is to prepend the property name with the prefix ``kafka.``.
-                                                    For example: kafka.producer.type
-======================  ==========================  ===============================================================================================================
+=======================================  ==========================  ===============================================================================================================
+Property Name                            Default                     Description
+=======================================  ==========================  ===============================================================================================================
+**type**                                 --                          The component type name, needs to be ``org.apache.flume.channel.kafka.KafkaChannel``
+**kafka.bootstrap.servers**              --                          List of brokers in the Kafka cluster used by the channel
+                                                                     This can be a partial list of brokers, but we recommend at least two for HA.
+                                                                     The format is comma separated list of hostname:port
+kafka.topic                              flume-channel               Kafka topic which the channel will use
+kafka.consumer.group.id                  flume                       Consumer group ID the channel uses to register with Kafka.
+                                                                     Multiple channels must use the same topic and group to ensure that when one agent fails another can get the data
+                                                                     Note that having non-channel consumers with the same ID can lead to data loss.
+
+parseAsFlumeEvent                        true                        Expecting Avro datums with FlumeEvent schema in the channel.
+                                                                     This should be true if Flume source is writing to the channel and false if other producers are
+                                                                     writing into the topic that the channel is using. Flume source messages to Kafka can be parsed outside of Flume by using
+                                                                     org.apache.flume.source.avro.AvroFlumeEvent provided by the flume-ng-sdk artifact
+migrateZookeeperOffsets                  true                        When no Kafka stored offset is found, look up the offsets in Zookeeper and commit them to Kafka.
+                                                                     This should be true to support seamless Kafka client migration from older versions of Flume. Once migrated this can be set
+                                                                     to false, though that should generally not be required. If no Zookeeper offset is found the kafka.consumer.auto.offset.reset
+                                                                     configuration defines how offsets are handled.
+pollTimeout                              500                         The amount of time(in milliseconds) to wait in the "poll()" call of the consumer.
+                                                                     https://kafka.apache.org/090/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html#poll(long)
+defaultPartitionId                       --                          Specifies a Kafka partition ID (integer) for all events in this channel to be sent to, unless
+                                                                     overriden by ``partitionIdHeader``. By default, if this property is not set, events will be
+                                                                     distributed by the Kafka Producer's partitioner - including by ``key`` if specified (or by a 
+                                                                     partitioner specified by ``kafka.partitioner.class``).
+partitionIdHeader                        --                          When set, the producer will take the value of the field named using the value of this property
+                                                                     from the event header and send the message to the specified partition of the topic. If the
+                                                                     value represents an invalid partition the event will not be accepted into the channel. If the header value
+                                                                     is present then this setting overrides ``defaultPartitionId``.
+kafka.consumer.auto.offset.reset         latest                      What to do when there is no initial offset in Kafka or if the current offset does not exist any more on the server
+                                                                     (e.g. because that data has been deleted):
+                                                                     earliest: automatically reset the offset to the earliest offset
+                                                                     latest: automatically reset the offset to the latest offset
+                                                                     none: throw exception to the consumer if no previous offset is found for the consumer\'s group
+                                                                     anything else: throw exception to the consumer.
+kafka.producer.security.protocol         PLAINTEXT                   Set to SASL_PLAINTEXT, SASL_SSL or SSL if writing to Kafka using some level of security. See below for additional info on secure setup.
+kafka.consumer.security.protocol         PLAINTEXT                   Same as kafka.producer.security.protocol but for reading/consuming from Kafka.
+*more producer/consumer security props*                              If using SASL_PLAINTEXT, SASL_SSL or SSL refer to `Kafka security <http://kafka.apache.org/documentation.html#security>`_ for additional
+                                                                     properties that need to be set on producer/consumer.
+=======================================  ==========================  ===============================================================================================================
+
+Deprecated Properties
+
+================================  ==========================  ===============================================================================================================
+Property Name                     Default                     Description
+================================  ==========================  ===============================================================================================================
+brokerList                        --                          List of brokers in the Kafka cluster used by the channel
+                                                              This can be a partial list of brokers, but we recommend at least two for HA.
+                                                              The format is comma separated list of hostname:port
+topic                             flume-channel               Use kafka.topic
+groupId                           flume                       Use kafka.consumer.group.id
+readSmallestOffset                false                       Use kafka.consumer.auto.offset.reset
+
+================================  ==========================  ===============================================================================================================
 
 .. note:: Due to the way the channel is load balanced, there may be duplicate events when the agent first starts up
 
@@ -2673,12 +3258,162 @@ Example for agent named a1:
 
 .. code-block:: properties
 
-    a1.channels.channel1.type   = org.apache.flume.channel.kafka.KafkaChannel
-    a1.channels.channel1.capacity = 10000
-    a1.channels.channel1.transactionCapacity = 1000
-    a1.channels.channel1.brokerList=kafka-2:9092,kafka-3:9092
-    a1.channels.channel1.topic=channel1
-    a1.channels.channel1.zookeeperConnect=kafka-1:2181
+    a1.channels.channel1.type = org.apache.flume.channel.kafka.KafkaChannel
+    a1.channels.channel1.kafka.bootstrap.servers = kafka-1:9092,kafka-2:9092,kafka-3:9092
+    a1.channels.channel1.kafka.topic = channel1
+    a1.channels.channel1.kafka.consumer.group.id = flume-consumer
+
+
+**Security and Kafka Channel:**
+
+Secure authentication as well as data encryption is supported on the communication channel between Flume and Kafka.
+For secure authentication SASL/GSSAPI (Kerberos V5) or SSL (even though the parameter is named SSL, the actual protocol is a TLS implementation) can be used from Kafka version 0.9.0.
+
+As of now data encryption is solely provided by SSL/TLS.
+
+Setting ``kafka.producer|consumer.security.protocol`` to any of the following value means:
+
+- **SASL_PLAINTEXT** - Kerberos or plaintext authentication with no data encryption
+- **SASL_SSL** - Kerberos or plaintext authentication with data encryption
+- **SSL** - TLS based encryption with optional authentication.
+
+.. warning::
+    There is a performance degradation when SSL is enabled,
+    the magnitude of which depends on the CPU type and the JVM implementation.
+    Reference: `Kafka security overview <http://kafka.apache.org/documentation#security_overview>`_
+    and the jira for tracking this issue:
+    `KAFKA-2561 <https://issues.apache.org/jira/browse/KAFKA-2561>`_
+
+
+**TLS and Kafka Channel:**
+
+Please read the steps described in `Configuring Kafka Clients SSL <http://kafka.apache.org/documentation#security_configclients>`_
+to learn about additional configuration settings for fine tuning for example any of the following:
+security provider, cipher suites, enabled protocols, truststore or keystore types.
+
+Example configuration with server side authentication and data encryption.
+
+.. code-block:: properties
+
+    a1.channels.channel1.type = org.apache.flume.channel.kafka.KafkaChannel
+    a1.channels.channel1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.channels.channel1.kafka.topic = channel1
+    a1.channels.channel1.kafka.consumer.group.id = flume-consumer
+    a1.channels.channel1.kafka.producer.security.protocol = SSL
+    a1.channels.channel1.kafka.producer.ssl.truststore.location = /path/to/truststore.jks
+    a1.channels.channel1.kafka.producer.ssl.truststore.password = <password to access the truststore>
+    a1.channels.channel1.kafka.consumer.security.protocol = SSL
+    a1.channels.channel1.kafka.consumer.ssl.truststore.location = /path/to/truststore.jks
+    a1.channels.channel1.kafka.consumer.ssl.truststore.password = <password to access the truststore>
+
+
+Note: By default the property ``ssl.endpoint.identification.algorithm``
+is not defined, so hostname verification is not performed.
+In order to enable hostname verification, set the following properties
+
+.. code-block:: properties
+
+    a1.channels.channel1.kafka.producer.ssl.endpoint.identification.algorithm = HTTPS
+    a1.channels.channel1.kafka.consumer.ssl.endpoint.identification.algorithm = HTTPS
+
+Once enabled, clients will verify the server's fully qualified domain name (FQDN)
+against one of the following two fields:
+
+#) Common Name (CN) https://tools.ietf.org/html/rfc6125#section-2.3
+#) Subject Alternative Name (SAN) https://tools.ietf.org/html/rfc5280#section-4.2.1.6
+
+If client side authentication is also required then additionally the following should be added to Flume agent configuration.
+Each Flume agent has to have its client certificate which has to be trusted by Kafka brokers either
+individually or by their signature chain. Common example is to sign each client certificate by a single Root CA
+which in turn is trusted by Kafka brokers.
+
+.. code-block:: properties
+
+    a1.channels.channel1.kafka.producer.ssl.keystore.location = /path/to/client.keystore.jks
+    a1.channels.channel1.kafka.producer.ssl.keystore.password = <password to access the keystore>
+    a1.channels.channel1.kafka.consumer.ssl.keystore.location = /path/to/client.keystore.jks
+    a1.channels.channel1.kafka.consumer.ssl.keystore.password = <password to access the keystore>
+
+If keystore and key use different password protection then ``ssl.key.password`` property will
+provide the required additional secret for both consumer and producer keystores:
+
+.. code-block:: properties
+
+    a1.channels.channel1.kafka.producer.ssl.key.password = <password to access the key>
+    a1.channels.channel1.kafka.consumer.ssl.key.password = <password to access the key>
+
+
+**Kerberos and Kafka Channel:**
+
+To use Kafka channel with a Kafka cluster secured with Kerberos, set the ``producer/consumer.security.protocol`` properties noted above for producer and/or consumer.
+The Kerberos keytab and principal to be used with Kafka brokers is specified in a JAAS file's "KafkaClient" section. "Client" section describes the Zookeeper connection if needed.
+See `Kafka doc <http://kafka.apache.org/documentation.html#security_sasl_clientconfig>`_
+for information on the JAAS file contents. The location of this JAAS file and optionally the system wide kerberos configuration can be specified via JAVA_OPTS in flume-env.sh:
+
+.. code-block:: properties
+
+    JAVA_OPTS="$JAVA_OPTS -Djava.security.krb5.conf=/path/to/krb5.conf"
+    JAVA_OPTS="$JAVA_OPTS -Djava.security.auth.login.config=/path/to/flume_jaas.conf"
+
+Example secure configuration using SASL_PLAINTEXT:
+
+.. code-block:: properties
+
+    a1.channels.channel1.type = org.apache.flume.channel.kafka.KafkaChannel
+    a1.channels.channel1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.channels.channel1.kafka.topic = channel1
+    a1.channels.channel1.kafka.consumer.group.id = flume-consumer
+    a1.channels.channel1.kafka.producer.security.protocol = SASL_PLAINTEXT
+    a1.channels.channel1.kafka.producer.sasl.mechanism = GSSAPI
+    a1.channels.channel1.kafka.producer.sasl.kerberos.service.name = kafka
+    a1.channels.channel1.kafka.consumer.security.protocol = SASL_PLAINTEXT
+    a1.channels.channel1.kafka.consumer.sasl.mechanism = GSSAPI
+    a1.channels.channel1.kafka.consumer.sasl.kerberos.service.name = kafka
+
+Example secure configuration using SASL_SSL:
+
+.. code-block:: properties
+
+    a1.channels.channel1.type = org.apache.flume.channel.kafka.KafkaChannel
+    a1.channels.channel1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
+    a1.channels.channel1.kafka.topic = channel1
+    a1.channels.channel1.kafka.consumer.group.id = flume-consumer
+    a1.channels.channel1.kafka.producer.security.protocol = SASL_SSL
+    a1.channels.channel1.kafka.producer.sasl.mechanism = GSSAPI
+    a1.channels.channel1.kafka.producer.sasl.kerberos.service.name = kafka
+    a1.channels.channel1.kafka.producer.ssl.truststore.location = /path/to/truststore.jks
+    a1.channels.channel1.kafka.producer.ssl.truststore.password = <password to access the truststore>
+    a1.channels.channel1.kafka.consumer.security.protocol = SASL_SSL
+    a1.channels.channel1.kafka.consumer.sasl.mechanism = GSSAPI
+    a1.channels.channel1.kafka.consumer.sasl.kerberos.service.name = kafka
+    a1.channels.channel1.kafka.consumer.ssl.truststore.location = /path/to/truststore.jks
+    a1.channels.channel1.kafka.consumer.ssl.truststore.password = <password to access the truststore>
+
+
+Sample JAAS file. For reference of its content please see client config sections of the desired authentication mechanism (GSSAPI/PLAIN)
+in Kafka documentation of `SASL configuration <http://kafka.apache.org/documentation#security_sasl_clientconfig>`_.
+Since the Kafka Source may also connect to Zookeeper for offset migration, the "Client" section was also added to this example.
+This won't be needed unless you require offset migration, or you require this section for other secure components.
+Also please make sure that the operating system user of the Flume processes has read privileges on the jaas and keytab files.
+
+.. code-block:: javascript
+
+    Client {
+      com.sun.security.auth.module.Krb5LoginModule required
+      useKeyTab=true
+      storeKey=true
+      keyTab="/path/to/keytabs/flume.keytab"
+      principal="flume/flumehost1.example.com@YOURKERBEROSREALM";
+    };
+
+    KafkaClient {
+      com.sun.security.auth.module.Krb5LoginModule required
+      useKeyTab=true
+      storeKey=true
+      keyTab="/path/to/keytabs/flume.keytab"
+      principal="flume/flumehost1.example.com@YOURKERBEROSREALM";
+    };
+
 
 File Channel
 ~~~~~~~~~~~~
@@ -2795,7 +3530,7 @@ The disk store is managed using an embedded File channel. When the in-memory que
 the file channel. This channel is ideal for flows that need high throughput of memory channel during normal operation, but at the
 same time need the larger capacity of the file channel for better tolerance of intermittent sink side outages or drop in drain rates.
 The throughput will reduce approximately to file channel speeds during such abnormal situations. In case of an agent crash or restart,
-only the events stored on disk are recovered when the agent comes online. **This channel is currently experimental and 
+only the events stored on disk are recovered when the agent comes online. **This channel is currently experimental and
 not recommended for use in production.**
 
 Required properties are in **bold**. Please refer to file channel for additional required properties.
@@ -2924,9 +3659,9 @@ Example for agent named a1 and it's source called r1:
 
   a1.sources = r1
   a1.channels = c1 c2 c3
-  a1.source.r1.selector.type = replicating
-  a1.source.r1.channels = c1 c2 c3
-  a1.source.r1.selector.optional = c3
+  a1.sources.r1.selector.type = replicating
+  a1.sources.r1.channels = c1 c2 c3
+  a1.sources.r1.selector.optional = c3
 
 In the above configuration, c3 is an optional channel. Failure to write to c3 is
 simply ignored. Since c1 and c2 are not marked optional, failure to write to
@@ -3149,13 +3884,17 @@ Example for agent named a1:
   a1.sinks.k1.sink.serializer = text
   a1.sinks.k1.sink.serializer.appendNewline = false
 
-Avro Event Serializer
-~~~~~~~~~~~~~~~~~~~~~
+"Flume Event" Avro Event Serializer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Alias: ``avro_event``. This interceptor serializes Flume events into an Avro
-container file. The schema used is the same schema used for Flume events
-in the Avro RPC mechanism. This serializers inherits from the
-``AbstractAvroEventSerializer`` class. Configuration options are as follows:
+Alias: ``avro_event``.
+
+This interceptor serializes Flume events into an Avro container file. The schema used is the same schema used for
+Flume events in the Avro RPC mechanism.
+
+This serializer inherits from the ``AbstractAvroEventSerializer`` class.
+
+Configuration options are as follows:
 
 ==========================  ================  ===========================================================================
 Property Name               Default           Description
@@ -3173,6 +3912,43 @@ Example for agent named a1:
   a1.sinks.k1.hdfs.path = /flume/events/%y-%m-%d/%H%M/%S
   a1.sinks.k1.serializer = avro_event
   a1.sinks.k1.serializer.compressionCodec = snappy
+
+Avro Event Serializer
+~~~~~~~~~~~~~~~~~~~~~
+
+Alias: This serializer does not have an alias, and must be specified using the fully-qualified class name class name.
+
+This serializes Flume events into an Avro container file like the "Flume Event" Avro Event Serializer, however the
+record schema is configurable. The record schema may be specified either as a Flume configuration property or passed in an event header.
+
+To pass the record schema as part of the Flume configuration, use the property ``schemaURL`` as listed below.
+
+To pass the record schema in an event header, specify either the event header ``flume.avro.schema.literal``
+containing a JSON-format representation of the schema or ``flume.avro.schema.url`` with a URL where
+the schema may be found (``hdfs:/...`` URIs are supported).
+
+This serializer inherits from the ``AbstractAvroEventSerializer`` class.
+
+Configuration options are as follows:
+
+==========================  ================  ===========================================================================
+Property Name               Default           Description
+==========================  ================  ===========================================================================
+syncIntervalBytes           2048000           Avro sync interval, in approximate bytes.
+compressionCodec            null              Avro compression codec. For supported codecs, see Avro's CodecFactory docs.
+schemaURL                   null              Avro schema URL. Schemas specified in the header ovverride this option.
+==========================  ================  ===========================================================================
+
+Example for agent named a1:
+
+.. code-block:: properties
+
+  a1.sinks.k1.type = hdfs
+  a1.sinks.k1.channel = c1
+  a1.sinks.k1.hdfs.path = /flume/events/%y-%m-%d/%H%M/%S
+  a1.sinks.k1.serializer = org.apache.flume.sink.hdfs.AvroEventSerializer$Builder
+  a1.sinks.k1.serializer.compressionCodec = snappy
+  a1.sinks.k1.serializer.schemaURL = hdfs://namenode/path/to/schema.avsc
 
 
 Flume Interceptors
@@ -3213,15 +3989,16 @@ Timestamp Interceptor
 ~~~~~~~~~~~~~~~~~~~~~
 
 This interceptor inserts into the event headers, the time in millis at which it processes the event. This interceptor
-inserts a header with key ``timestamp`` whose value is the relevant timestamp. This interceptor
-can preserve an existing timestamp if it is already present in the configuration.
+inserts a header with key ``timestamp`` (or as specified by the ``header`` property) whose value is the relevant timestamp.
+This interceptor can preserve an existing timestamp if it is already present in the configuration.
 
-================  =======  ========================================================================
-Property Name     Default  Description
-================  =======  ========================================================================
-**type**          --       The component type name, has to be ``timestamp`` or the FQCN
-preserveExisting  false    If the timestamp already exists, should it be preserved - true or false
-================  =======  ========================================================================
+================  =========  ========================================================================
+Property Name     Default    Description
+================  =========  ========================================================================
+**type**          --         The component type name, has to be ``timestamp`` or the FQCN
+header            timestamp  The name of the header in which to place the generated timestamp.
+preserveExisting  false      If the timestamp already exists, should it be preserved - true or false
+================  =========  ========================================================================
 
 Example for agent named a1:
 
@@ -3257,7 +4034,6 @@ Example for agent named a1:
   a1.channels = c1
   a1.sources.r1.interceptors = i1
   a1.sources.r1.interceptors.i1.type = host
-  a1.sources.r1.interceptors.i1.hostHeader = hostname
 
 Static Interceptor
 ~~~~~~~~~~~~~~~~~~
@@ -3288,6 +4064,25 @@ Example for agent named a1:
   a1.sources.r1.interceptors.i1.type = static
   a1.sources.r1.interceptors.i1.key = datacenter
   a1.sources.r1.interceptors.i1.value = NEW_YORK
+
+
+Remove Header Interceptor
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This interceptor manipulates Flume event headers, by removing one or many headers. It can remove a statically defined header, headers based on a regular expression or headers in a list. If none of these is defined, or if no header matches the criteria, the Flume events are not modified.
+
+Note that if only one header needs to be removed, specifying it by name provides performance benefits over the other 2 methods.
+
+=====================  ===========  ===============================================================
+Property Name          Default      Description
+=====================  ===========  ===============================================================
+**type**               --           The component type name has to be ``remove_header``
+withName               --           Name of the header to remove
+fromList               --           List of headers to remove, separated with the separator specified by ``fromListSeparator``
+fromListSeparator      \\s*,\\s*    Regular expression used to separate multiple header names in the list specified by ``fromList``. Default is a comma surrounded by any number of whitespace characters
+matching               --           All the headers which names match this regular expression are removed
+=====================  ===========  ===============================================================
+
 
 UUID Interceptor
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -3483,7 +4278,7 @@ Log4J Appender
 
 Appends Log4j events to a flume agent's avro source. A client using this
 appender must have the flume-ng-sdk in the classpath (eg,
-flume-ng-sdk-1.7.0-SNAPSHOT.jar).
+flume-ng-sdk-1.9.0-SNAPSHOT.jar).
 Required properties are in **bold**.
 
 =====================  =======  ==================================================================================
@@ -3547,7 +4342,7 @@ Load Balancing Log4J Appender
 
 Appends Log4j events to a list of flume agent's avro source. A client using this
 appender must have the flume-ng-sdk in the classpath (eg,
-flume-ng-sdk-1.7.0-SNAPSHOT.jar). This appender supports a round-robin and random
+flume-ng-sdk-1.9.0-SNAPSHOT.jar). This appender supports a round-robin and random
 scheme for performing the load balancing. It also supports a configurable backoff
 timeout so that down agents are removed temporarily from the set of hosts
 Required properties are in **bold**.

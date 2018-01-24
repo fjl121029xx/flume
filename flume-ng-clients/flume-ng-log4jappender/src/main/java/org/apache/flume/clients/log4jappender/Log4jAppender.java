@@ -20,8 +20,14 @@ package org.apache.flume.clients.log4jappender;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.charset.Charset;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -47,7 +53,7 @@ import org.apache.log4j.spi.LoggingEvent;
 
 /**
  *
- * Appends Log4j Events to an external Flume client which is decribed by
+ * Appends Log4j Events to an external Flume client which is described by
  * the Log4j configuration file. The appender takes two required parameters:
  *<p>
  *<strong>Hostname</strong> : This is the hostname of the first hop
@@ -75,10 +81,10 @@ public class Log4jAppender extends AppenderSkeleton {
   private String hostname;
   private int port;
   private boolean unsafeMode = false;
-  private long timeout = RpcClientConfigurationConstants
-    .DEFAULT_REQUEST_TIMEOUT_MILLIS;
+  private long timeout = RpcClientConfigurationConstants.DEFAULT_REQUEST_TIMEOUT_MILLIS;
   private boolean avroReflectionEnabled;
   private String avroSchemaUrl;
+  private String clientAddress = "";
 
   RpcClient rpcClient = null;
 
@@ -88,7 +94,7 @@ public class Log4jAppender extends AppenderSkeleton {
    * you must set the <tt>port</tt> and <tt>hostname</tt> and then call
    * <tt>activateOptions()</tt> before calling <tt>append()</tt>.
    */
-  public Log4jAppender(){
+  public Log4jAppender() {
   }
 
   /**
@@ -99,7 +105,7 @@ public class Log4jAppender extends AppenderSkeleton {
    * @param port The port to connect on the host.
    *
    */
-  public Log4jAppender(String hostname, int port){
+  public Log4jAppender(String hostname, int port) {
     this.hostname = hostname;
     this.port = port;
   }
@@ -112,14 +118,14 @@ public class Log4jAppender extends AppenderSkeleton {
    * was a connection error.
    */
   @Override
-  public synchronized void append(LoggingEvent event) throws FlumeException{
+  public synchronized void append(LoggingEvent event) throws FlumeException {
     //If rpcClient is null, it means either this appender object was never
     //setup by setting hostname and port and then calling activateOptions
     //or this appender object was closed by calling close(), so we throw an
     //exception to show the appender is no longer accessible.
     if (rpcClient == null) {
       String errorMsg = "Cannot Append to Appender! Appender either closed or" +
-        " not setup correctly!";
+          " not setup correctly!";
       LogLog.error(errorMsg);
       if (unsafeMode) {
         return;
@@ -127,40 +133,21 @@ public class Log4jAppender extends AppenderSkeleton {
       throw new FlumeException(errorMsg);
     }
 
-    if(!rpcClient.isActive()){
+    if (!rpcClient.isActive()) {
       reconnect();
     }
 
-    //Client created first time append is called.
-    Map<String, String> hdrs = new HashMap<String, String>();
-    hdrs.put(Log4jAvroHeaders.LOGGER_NAME.toString(), event.getLoggerName());
-    hdrs.put(Log4jAvroHeaders.TIMESTAMP.toString(),
-        String.valueOf(event.timeStamp));
-
-    //To get the level back simply use
-    //LoggerEvent.toLevel(hdrs.get(Integer.parseInt(
-    //Log4jAvroHeaders.LOG_LEVEL.toString()))
-    hdrs.put(Log4jAvroHeaders.LOG_LEVEL.toString(),
-        String.valueOf(event.getLevel().toInt()));
-
-    Event flumeEvent;
-    Object message = event.getMessage();
-    if (message instanceof GenericRecord) {
-      GenericRecord record = (GenericRecord) message;
-      populateAvroHeaders(hdrs, record.getSchema(), message);
-      flumeEvent = EventBuilder.withBody(serialize(record, record.getSchema()), hdrs);
-    } else if (message instanceof SpecificRecord || avroReflectionEnabled) {
-      Schema schema = ReflectData.get().getSchema(message.getClass());
-      populateAvroHeaders(hdrs, schema, message);
-      flumeEvent = EventBuilder.withBody(serialize(message, schema), hdrs);
-    } else {
-      hdrs.put(Log4jAvroHeaders.MESSAGE_ENCODING.toString(), "UTF8");
-      String msg = layout != null ? layout.format(event) : message.toString();
-      flumeEvent = EventBuilder.withBody(msg, Charset.forName("UTF8"), hdrs);
-    }
-
+    List<Event> flumeEvents = parseEvents(event);
     try {
-      rpcClient.append(flumeEvent);
+      switch (flumeEvents.size()) {
+        case 0:
+          break;
+        case 1:
+          rpcClient.append(flumeEvents.get(0));
+          break;
+        default:
+          rpcClient.appendBatch(flumeEvents);
+      }
     } catch (EventDeliveryException e) {
       String msg = "Flume append() failed.";
       LogLog.error(msg);
@@ -171,13 +158,69 @@ public class Log4jAppender extends AppenderSkeleton {
     }
   }
 
+  private List<Event> parseEvents(LoggingEvent loggingEvent) {
+    Map<String, String> headers = new HashMap<>();
+    headers.put(Log4jAvroHeaders.LOGGER_NAME.toString(), loggingEvent.getLoggerName());
+    headers.put(Log4jAvroHeaders.TIMESTAMP.toString(), String.valueOf(loggingEvent.timeStamp));
+    headers.put(Log4jAvroHeaders.ADDRESS.toString(), clientAddress);
+
+    //To get the level back simply use
+    //LoggerEvent.toLevel(hdrs.get(Integer.parseInt(
+    //Log4jAvroHeaders.LOG_LEVEL.toString()))
+    headers.put(Log4jAvroHeaders.LOG_LEVEL.toString(),
+        String.valueOf(loggingEvent.getLevel().toInt()));
+
+    Map<String, String> headersWithEncoding = null;
+
+    Collection<?> messages;
+    if (loggingEvent.getMessage() instanceof Collection) {
+      messages = (Collection) loggingEvent.getMessage();
+    } else {
+      messages = Collections.singleton(loggingEvent.getMessage());
+    }
+
+    List<Event> events = new LinkedList<>();
+    for (Object message : messages) {
+      if (message instanceof GenericRecord) {
+        GenericRecord record = (GenericRecord) message;
+        populateAvroHeaders(headers, record.getSchema());
+        events.add(EventBuilder.withBody(serialize(record, record.getSchema()), headers));
+
+      } else if (message instanceof SpecificRecord || avroReflectionEnabled) {
+        Schema schema = ReflectData.get().getSchema(message.getClass());
+        populateAvroHeaders(headers, schema);
+        events.add(EventBuilder.withBody(serialize(message, schema), headers));
+
+      } else {
+        String msg;
+        if (layout != null) {
+          LoggingEvent singleLoggingEvent = new LoggingEvent(loggingEvent.getFQNOfLoggerClass(),
+              loggingEvent.getLogger(), loggingEvent.getTimeStamp(), loggingEvent.getLevel(),
+              message, loggingEvent.getThreadName(), loggingEvent.getThrowableInformation(),
+              loggingEvent.getNDC(), loggingEvent.getLocationInformation(),
+              loggingEvent.getProperties());
+          msg = layout.format(singleLoggingEvent);
+        } else {
+          msg = message.toString();
+        }
+
+        if (headersWithEncoding == null) {
+          headersWithEncoding = new HashMap<>(headers);
+          headersWithEncoding.put(Log4jAvroHeaders.MESSAGE_ENCODING.toString(), "UTF8");
+        }
+        events.add(EventBuilder.withBody(msg, Charset.forName("UTF8"), headersWithEncoding));
+      }
+    }
+
+    return events;
+  }
+
   private Schema schema;
   private ByteArrayOutputStream out;
   private DatumWriter<Object> writer;
   private BinaryEncoder encoder;
 
-  protected void populateAvroHeaders(Map<String, String> hdrs, Schema schema,
-      Object message) {
+  protected void populateAvroHeaders(Map<String, String> hdrs, Schema schema) {
     if (avroSchemaUrl != null) {
       hdrs.put(Log4jAvroHeaders.AVRO_SCHEMA_URL.toString(), avroSchemaUrl);
       return;
@@ -191,7 +234,7 @@ public class Log4jAppender extends AppenderSkeleton {
     if (schema == null || !datumSchema.equals(schema)) {
       schema = datumSchema;
       out = new ByteArrayOutputStream();
-      writer = new ReflectDatumWriter<Object>(schema);
+      writer = new ReflectDatumWriter<>(schema);
       encoder = EncoderFactory.get().binaryEncoder(out, null);
     }
     out.reset();
@@ -231,7 +274,7 @@ public class Log4jAppender extends AppenderSkeleton {
     } else {
       String errorMsg = "Flume log4jappender already closed!";
       LogLog.error(errorMsg);
-      if(unsafeMode) {
+      if (unsafeMode) {
         return;
       }
       throw new FlumeException(errorMsg);
@@ -251,7 +294,7 @@ public class Log4jAppender extends AppenderSkeleton {
    * Set the first flume hop hostname.
    * @param hostname The first hop where the client should connect to.
    */
-  public void setHostname(String hostname){
+  public void setHostname(String hostname) {
     this.hostname = hostname;
   }
 
@@ -259,7 +302,7 @@ public class Log4jAppender extends AppenderSkeleton {
    * Set the port on the hostname to connect to.
    * @param port The port to connect on the host.
    */
-  public void setPort(int port){
+  public void setPort(int port) {
     this.port = port;
   }
 
@@ -299,24 +342,41 @@ public class Log4jAppender extends AppenderSkeleton {
     Properties props = new Properties();
     props.setProperty(RpcClientConfigurationConstants.CONFIG_HOSTS, "h1");
     props.setProperty(RpcClientConfigurationConstants.CONFIG_HOSTS_PREFIX + "h1",
-      hostname + ":" + port);
+        hostname + ":" + port);
     props.setProperty(RpcClientConfigurationConstants.CONFIG_CONNECT_TIMEOUT,
-     String.valueOf(timeout));
+        String.valueOf(timeout));
     props.setProperty(RpcClientConfigurationConstants.CONFIG_REQUEST_TIMEOUT,
-      String.valueOf(timeout));
+        String.valueOf(timeout));
     try {
       rpcClient = RpcClientFactory.getInstance(props);
       if (layout != null) {
         layout.activateOptions();
       }
     } catch (FlumeException e) {
-      String errormsg = "RPC client creation failed! " +
-        e.getMessage();
+      String errormsg = "RPC client creation failed! " + e.getMessage();
       LogLog.error(errormsg);
       if (unsafeMode) {
         return;
       }
       throw e;
+    }
+    initializeClientAddress();
+  }
+
+  /**
+   * Resolves local host address so it can be included in event headers.
+   * @throws FlumeException if local host address can not be resolved.
+   */
+  protected void initializeClientAddress() throws FlumeException {
+    try {
+      clientAddress = InetAddress.getLocalHost().getHostAddress();
+    } catch (UnknownHostException e) {
+      String errormsg = "Failed to resolve local host address! " + e.getMessage();
+      LogLog.error(errormsg);
+      if (unsafeMode) {
+        return;
+      }
+      throw new FlumeException(e);
     }
   }
 

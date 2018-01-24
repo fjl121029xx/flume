@@ -72,7 +72,7 @@ import com.google.common.collect.Lists;
 public class RegexFilteringInterceptor implements Interceptor {
 
   private static final Logger logger = LoggerFactory
-      .getLogger(StaticInterceptor.class);
+      .getLogger(RegexFilteringInterceptor.class);
 
   private final Pattern regex;
   private final boolean excludeEvents;
@@ -103,16 +103,13 @@ public class RegexFilteringInterceptor implements Interceptor {
     if (!excludeEvents) {
       if (regex.matcher(new String(event.getBody())).find()) {
         return event;
-      }
-      else {
+      } else {
         return null;
       }
-    }
-    else {
+    } else {
       if (regex.matcher(new String(event.getBody())).find()) {
         return null;
-      }
-      else {
+      } else {
         return event;
       }
     }
@@ -129,7 +126,9 @@ public class RegexFilteringInterceptor implements Interceptor {
     List<Event> out = Lists.newArrayList();
     for (Event event : events) {
       Event outEvent = intercept(event);
-      if (outEvent != null) { out.add(outEvent); }
+      if (outEvent != null) {
+        out.add(outEvent);
+      }
     }
     return out;
   }
@@ -140,7 +139,7 @@ public class RegexFilteringInterceptor implements Interceptor {
   }
 
   /**
-   * Builder which builds new instance of the StaticInterceptor.
+   * Builder which builds new instance of the RegexFilteringInterceptor.
    */
   public static class Builder implements Interceptor.Builder {
 

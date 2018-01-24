@@ -18,6 +18,14 @@
  */
 package org.apache.flume.test.util;
 
+import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
+import com.google.common.io.Files;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.log4j.Logger;
+
 import java.io.File;
 import java.io.FileFilter;
 import java.io.FileInputStream;
@@ -25,21 +33,12 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
-
-import com.google.common.base.Preconditions;
-import com.google.common.io.Files;
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
-import org.apache.log4j.Logger;
-
-import com.google.common.base.Joiner;
-import com.google.common.collect.ImmutableList;
 
 
 /**
@@ -73,11 +72,17 @@ public class StagedInstall {
 
   private static StagedInstall INSTANCE;
 
-  public synchronized static StagedInstall getInstance() throws Exception {
+  public static synchronized StagedInstall getInstance() throws Exception {
     if (INSTANCE == null) {
       INSTANCE = new StagedInstall();
     }
     return INSTANCE;
+  }
+
+  public static int findFreePort() throws IOException {
+    try (ServerSocket socket = new ServerSocket(0)) {
+      return socket.getLocalPort();
+    }
   }
 
   public synchronized boolean isRunning() {
@@ -102,16 +107,17 @@ public class StagedInstall {
     Thread.sleep(3000); // sleep for 3s to let system shutdown
   }
 
-  public synchronized void startAgent(String name, String configResource)
+  public synchronized int startAgent(String name, String configResource)
       throws Exception {
     if (process != null) {
       throw new Exception("A process is already running");
     }
-
+    int port = findFreePort();
     Properties props = new Properties();
     props.load(ClassLoader.getSystemResourceAsStream(configResource));
-
+    props.put("rpccagent.sources.src1.port", String.valueOf(port));
     startAgent(name, props);
+    return port;
   }
 
   public synchronized void startAgent(String name, Properties properties)
@@ -124,8 +130,7 @@ public class StagedInstall {
     if (process != null) {
       throw new Exception("A process is already running");
     }
-    LOGGER.info("Starting process for agent: " + agentName + " using config: "
-       + properties);
+    LOGGER.info("Starting process for agent: " + agentName + " using config: " + properties);
 
     File configFile = createConfigurationFile(agentName, properties);
     configFilePath = configFile.getCanonicalPath();
@@ -252,7 +257,7 @@ public class StagedInstall {
     File[] listBaseDirs = stageDir.listFiles();
     if (listBaseDirs != null && listBaseDirs.length == 1
         && listBaseDirs[0].isDirectory()) {
-      rootDir =listBaseDirs[0];
+      rootDir = listBaseDirs[0];
     }
     baseDir = rootDir;
 
@@ -417,7 +422,6 @@ public class StagedInstall {
       if (testFile.exists() && testFile.isDirectory()) {
         LOGGER.info("Found candidate dir: " + testFile.getCanonicalPath());
         File[] candidateFiles = testFile.listFiles(new FileFilter() {
-
           @Override
           public boolean accept(File pathname) {
             String name = pathname.getName();
@@ -426,7 +430,8 @@ public class StagedInstall {
               return true;
             }
             return false;
-          }});
+          }
+        });
 
         // There should be at most one
         if (candidateFiles != null && candidateFiles.length > 0) {
@@ -466,22 +471,22 @@ public class StagedInstall {
   }
 
   public static void waitUntilPortOpens(String host, int port, long timeout)
-      throws IOException, InterruptedException{
+      throws IOException, InterruptedException {
     long startTime = System.currentTimeMillis();
     Socket socket;
     boolean connected = false;
     //See if port has opened for timeout.
-    while(System.currentTimeMillis() - startTime < timeout){
-      try{
+    while (System.currentTimeMillis() - startTime < timeout) {
+      try {
         socket = new Socket(host, port);
         socket.close();
         connected = true;
         break;
-      } catch (IOException e){
+      } catch (IOException e) {
         Thread.sleep(2000);
       }
     }
-    if(!connected) {
+    if (!connected) {
       throw new IOException("Port not opened within specified timeout.");
     }
   }

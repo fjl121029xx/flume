@@ -113,11 +113,11 @@ public class SourceConfiguration extends ComponentConfiguration {
   }
 
   @Override
-  public String toString(int indentCount){
+  public String toString(int indentCount) {
     String basicStr = super.toString(indentCount);
     StringBuilder sb = new StringBuilder();
     sb.append(basicStr).append("CHANNELS:");
-    for(String channel : this.channels){
+    for (String channel : this.channels) {
       sb.append(FlumeConfiguration.INDENTSTEP).append(
           channel).append(FlumeConfiguration.NEWLINE);
     }
@@ -153,7 +153,7 @@ public class SourceConfiguration extends ComponentConfiguration {
     EXEC("org.apache.flume.conf.source.ExecSourceConfiguration"),
 
     /**
-     * Avro soruce.
+     * Avro source.
      *
      * @see AvroSource
      */
@@ -214,7 +214,14 @@ public class SourceConfiguration extends ComponentConfiguration {
      *
      * @see org.apache.flume.source.taildir.TaildirSource
      */
-    TAILDIR("org.apache.flume.source.taildir.TaildirSourceConfiguration")
+    TAILDIR("org.apache.flume.source.taildir.TaildirSourceConfiguration"),
+
+    /**
+     * Netcat UDP Source
+     *
+     * @see org.apache.flume.source.NetcatUdpSource
+     */
+    NETCATUDP("org.apache.flume.conf.source.NetcatUdpSourceConfiguration")
     ;
 
     private String srcConfigurationName;
@@ -224,7 +231,7 @@ public class SourceConfiguration extends ComponentConfiguration {
     }
 
     public String getSourceConfigurationType() {
-      return this.getSourceConfigurationType();
+      return this.srcConfigurationName;
     }
 
     @SuppressWarnings("unchecked")

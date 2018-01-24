@@ -16,16 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.flume.instrumentation.http;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.lang.reflect.Type;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.Map;
 import org.apache.flume.Channel;
 import org.apache.flume.Context;
 import org.apache.flume.Transaction;
@@ -39,18 +34,26 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import javax.servlet.http.HttpServletResponse;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.lang.reflect.Type;
+import java.net.HttpURLConnection;
+import java.net.ServerSocket;
+import java.net.URL;
+import java.util.Map;
 
-/**
- *
- */
 public class TestHTTPMetricsServer {
 
   Channel memChannel = new MemoryChannel();
   Channel pmemChannel = new PseudoTxnMemoryChannel();
-  Type mapType =
-          new TypeToken<Map<String, Map<String, String>>>() {
-          }.getType();
+  Type mapType = new TypeToken<Map<String, Map<String, String>>>() {}.getType();
   Gson gson = new Gson();
+
+  private static int getFreePort() throws Exception {
+    try (ServerSocket socket = new ServerSocket(0)) {
+      return socket.getLocalPort();
+    }
+  }
 
   @Test
   public void testJSON() throws Exception {
@@ -88,10 +91,7 @@ public class TestHTTPMetricsServer {
     txn2.commit();
     txn2.close();
 
-    testWithPort(5467);
-    testWithPort(33434);
-    testWithPort(44343);
-    testWithPort(0);
+    testWithPort(getFreePort());
     memChannel.stop();
     pmemChannel.stop();
   }
@@ -99,11 +99,7 @@ public class TestHTTPMetricsServer {
   private void testWithPort(int port) throws Exception {
     MonitorService srv = new HTTPMetricsServer();
     Context context = new Context();
-    if(port > 1024){
-      context.put(HTTPMetricsServer.CONFIG_PORT, String.valueOf(port));
-    } else {
-      port = HTTPMetricsServer.DEFAULT_PORT;
-    }
+    context.put(HTTPMetricsServer.CONFIG_PORT, String.valueOf(port));
     srv.configure(context);
     srv.start();
     Thread.sleep(1000);
@@ -127,35 +123,28 @@ public class TestHTTPMetricsServer {
     Assert.assertNotNull(pmemBean);
     JMXTestUtils.checkChannelCounterParams(pmemBean);
     srv.stop();
-    System.out.println(String.valueOf(port) + "test success!");
   }
 
   @Test
   public void testTrace() throws Exception {
-    doTestForbiddenMethods(4543,"TRACE");
+    doTestForbiddenMethods(getFreePort(),"TRACE");
   }
   @Test
   public void testOptions() throws Exception {
-    doTestForbiddenMethods(4432,"OPTIONS");
+    doTestForbiddenMethods(getFreePort(),"OPTIONS");
   }
 
-  public void doTestForbiddenMethods(int port, String method)
-    throws Exception {
+  public void doTestForbiddenMethods(int port, String method) throws Exception {
     MonitorService srv = new HTTPMetricsServer();
     Context context = new Context();
-    if (port > 1024) {
-      context.put(HTTPMetricsServer.CONFIG_PORT, String.valueOf(port));
-    } else {
-      port = HTTPMetricsServer.DEFAULT_PORT;
-    }
+    context.put(HTTPMetricsServer.CONFIG_PORT, String.valueOf(port));
     srv.configure(context);
     srv.start();
     Thread.sleep(1000);
     URL url = new URL("http://0.0.0.0:" + String.valueOf(port) + "/metrics");
     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
     conn.setRequestMethod(method);
-    Assert.assertEquals(HttpServletResponse.SC_FORBIDDEN,
-      conn.getResponseCode());
+    Assert.assertEquals(HttpServletResponse.SC_FORBIDDEN, conn.getResponseCode());
     srv.stop();
   }
 }

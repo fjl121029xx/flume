@@ -23,16 +23,17 @@ import java.io.IOException;
 
 import junit.framework.Assert;
 
+import org.apache.flume.channel.file.instrumentation.FileChannelCounter;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 public class TestCheckpoint {
-
   File file;
   File inflightPuts;
   File inflightTakes;
   File queueSet;
+
   @Before
   public void setup() throws IOException {
     file = File.createTempFile("Checkpoint", "");
@@ -42,14 +43,16 @@ public class TestCheckpoint {
     Assert.assertTrue(file.isFile());
     Assert.assertTrue(file.canWrite());
   }
+
   @After
   public void cleanup() {
     file.delete();
   }
+
   @Test
   public void testSerialization() throws Exception {
     EventQueueBackingStore backingStore =
-        new EventQueueBackingStoreFileV2(file, 1, "test");
+        new EventQueueBackingStoreFileV2(file, 1, "test", new FileChannelCounter("test"));
     FlumeEventPointer ptrIn = new FlumeEventPointer(10, 20);
     FlumeEventQueue queueIn = new FlumeEventQueue(backingStore,
         inflightTakes, inflightPuts, queueSet);

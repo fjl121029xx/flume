@@ -78,12 +78,15 @@ class Put extends TransactionEventRecord {
     Map<String, String> headers = event.getHeaders();
     ProtosFactory.FlumeEventHeader.Builder headerBuilder =
         ProtosFactory.FlumeEventHeader.newBuilder();
-    if(headers != null) {
-      for(String key : headers.keySet()) {
+    if (headers != null) {
+      for (String key : headers.keySet()) {
         String value = headers.get(key);
         headerBuilder.clear();
-        eventBuilder.addHeaders(headerBuilder.setKey(key)
-            .setValue(value).build());
+        headerBuilder.setKey(key);
+        if (value != null) {
+          headerBuilder.setValue(value);
+        }
+        eventBuilder.addHeaders(headerBuilder.build());
       }
     }
     eventBuilder.setBody(ByteString.copyFrom(event.getBody()));
@@ -93,13 +96,12 @@ class Put extends TransactionEventRecord {
     putBuilder.build().writeDelimitedTo(out);
   }
   @Override
-  void readProtos(InputStream in) throws IOException,
-    CorruptEventException {
-    ProtosFactory.Put put = Preconditions.checkNotNull(ProtosFactory.
-        Put.parseDelimitedFrom(in), "Put cannot be null");
+  void readProtos(InputStream in) throws IOException, CorruptEventException {
+    ProtosFactory.Put put = Preconditions.checkNotNull(
+        ProtosFactory.Put.parseDelimitedFrom(in), "Put cannot be null");
     Map<String, String> headers = Maps.newHashMap();
     ProtosFactory.FlumeEvent protosEvent = put.getEvent();
-    for(ProtosFactory.FlumeEventHeader header : protosEvent.getHeadersList()) {
+    for (ProtosFactory.FlumeEventHeader header : protosEvent.getHeadersList()) {
       headers.put(header.getKey(), header.getValue());
     }
     byte[] eventBody = protosEvent.getBody().toByteArray();

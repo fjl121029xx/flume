@@ -33,6 +33,7 @@ import org.apache.flume.EventDeliveryException;
 import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
 import org.apache.flume.formatter.output.PathManager;
+import org.apache.flume.formatter.output.PathManagerFactory;
 import org.apache.flume.instrumentation.SinkCounter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,13 +67,13 @@ public class RollingFileSink extends AbstractSink implements Configurable {
   private volatile boolean shouldRotate;
 
   public RollingFileSink() {
-    pathController = new PathManager();
     shouldRotate = false;
   }
 
   @Override
   public void configure(Context context) {
 
+    String pathManagerType = context.getString("sink.pathManager", "DEFAULT");
     String directory = context.getString("sink.directory");
     String rollInterval = context.getString("sink.rollInterval");
 
@@ -80,6 +81,11 @@ public class RollingFileSink extends AbstractSink implements Configurable {
     serializerContext =
         new Context(context.getSubProperties("sink." +
             EventSerializer.CTX_PREFIX));
+
+    Context pathManagerContext =
+              new Context(context.getSubProperties("sink." +
+                      PathManager.CTX_PREFIX));
+    pathController = PathManagerFactory.getInstance(pathManagerType, pathManagerContext);
 
     Preconditions.checkArgument(directory != null, "Directory may not be null");
     Preconditions.checkNotNull(serializerType, "Serializer type is undefined");
@@ -106,7 +112,7 @@ public class RollingFileSink extends AbstractSink implements Configurable {
     super.start();
 
     pathController.setBaseDirectory(directory);
-    if(rollInterval > 0){
+    if (rollInterval > 0) {
 
       rollService = Executors.newScheduledThreadPool(
           1,
@@ -130,7 +136,7 @@ public class RollingFileSink extends AbstractSink implements Configurable {
         }
 
       }, rollInterval, rollInterval, TimeUnit.SECONDS);
-    } else{
+    } else {
       logger.info("RollInterval is not valid, file rolling will not happen.");
     }
     logger.info("RollingFileSink {} started.", getName());
@@ -245,17 +251,15 @@ public class RollingFileSink extends AbstractSink implements Configurable {
         serializer = null;
       }
     }
-    if(rollInterval > 0){
+    if (rollInterval > 0) {
       rollService.shutdown();
 
       while (!rollService.isTerminated()) {
         try {
           rollService.awaitTermination(1, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
-          logger
-          .debug(
-              "Interrupted while waiting for roll service to stop. " +
-              "Please report this.", e);
+          logger.debug("Interrupted while waiting for roll service to stop. " +
+                       "Please report this.", e);
         }
       }
     }

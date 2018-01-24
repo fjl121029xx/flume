@@ -19,13 +19,9 @@
 
 package org.apache.flume.source.avroLegacy;
 
-import java.io.IOException;
-import java.net.URL;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-
+import com.cloudera.flume.handlers.avro.AvroFlumeOGEvent;
+import com.cloudera.flume.handlers.avro.FlumeOGEventAvroServer;
+import com.cloudera.flume.handlers.avro.Priority;
 import org.apache.avro.ipc.HttpTransceiver;
 import org.apache.avro.ipc.Transceiver;
 import org.apache.avro.ipc.specific.SpecificRequestor;
@@ -40,16 +36,19 @@ import org.apache.flume.channel.ReplicatingChannelSelector;
 import org.apache.flume.conf.Configurables;
 import org.apache.flume.lifecycle.LifecycleController;
 import org.apache.flume.lifecycle.LifecycleState;
-import com.cloudera.flume.handlers.avro.AvroFlumeOGEvent;
-import com.cloudera.flume.handlers.avro.FlumeOGEventAvroServer;
-import com.cloudera.flume.handlers.avro.Priority;
-import org.jboss.netty.channel.ChannelException;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.URL;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 
 public class TestLegacyAvroSource {
 
@@ -62,7 +61,7 @@ public class TestLegacyAvroSource {
   private Channel channel;
 
   @Before
-  public void setUp() {
+  public void setUp() throws Exception {
     source = new AvroLegacySource();
     channel = new MemoryChannel();
 
@@ -75,27 +74,23 @@ public class TestLegacyAvroSource {
     rcs.setChannels(channels);
 
     source.setChannelProcessor(new ChannelProcessor(rcs));
+
+    try (ServerSocket socket = new ServerSocket(0)) {
+      selectedPort = socket.getLocalPort();
+    }
+
   }
 
   @Test
   public void testLifecycle() throws InterruptedException {
-    boolean bound = false;
+    Context context = new Context();
 
-    for (int i = 0; i < 100 && !bound; i++) {
-      try {
-        Context context = new Context();
+    context.put("port", String.valueOf(selectedPort));
+    context.put("host", "0.0.0.0");
 
-        context.put("port", String.valueOf(selectedPort = 41414 + i));
-        context.put("host", "0.0.0.0");
+    Configurables.configure(source, context);
 
-        Configurables.configure(source, context);
-
-        source.start();
-        bound = true;
-      } catch (ChannelException e) {
-        // Assume port in use, try another one
-      }
-    }
+    source.start();
 
     Assert
         .assertTrue("Reached start or error", LifecycleController.waitForOneOf(
@@ -112,24 +107,14 @@ public class TestLegacyAvroSource {
 
   @Test
   public void testRequest() throws InterruptedException, IOException {
-    boolean bound = false;
-    int i;
+    Context context = new Context();
 
-    for (i = 0; i < 100 && !bound; i++) {
-      try {
-        Context context = new Context();
+    context.put("port", String.valueOf(selectedPort));
+    context.put("host", "0.0.0.0");
 
-        context.put("port", String.valueOf(selectedPort = 41414 + i));
-        context.put("host", "0.0.0.0");
+    Configurables.configure(source, context);
 
-        Configurables.configure(source, context);
-
-        source.start();
-        bound = true;
-      } catch (ChannelException e) {
-        // Assume port in use, try another one
-      }
-    }
+    source.start();
 
     Assert
         .assertTrue("Reached start or error", LifecycleController.waitForOneOf(
@@ -143,10 +128,10 @@ public class TestLegacyAvroSource {
     FlumeOGEventAvroServer client = SpecificRequestor.getClient(
         FlumeOGEventAvroServer.class, http);
 
-    AvroFlumeOGEvent avroEvent =  AvroFlumeOGEvent.newBuilder().setHost("foo").
-        setPriority(Priority.INFO).setNanos(0).setTimestamp(1).
-        setFields(new HashMap<CharSequence, ByteBuffer> ()).
-        setBody(ByteBuffer.wrap("foo".getBytes())).build();
+    AvroFlumeOGEvent avroEvent = AvroFlumeOGEvent.newBuilder().setHost("foo")
+        .setPriority(Priority.INFO).setNanos(0).setTimestamp(1)
+        .setFields(new HashMap<CharSequence, ByteBuffer>())
+        .setBody(ByteBuffer.wrap("foo".getBytes())).build();
 
     client.append(avroEvent);
 

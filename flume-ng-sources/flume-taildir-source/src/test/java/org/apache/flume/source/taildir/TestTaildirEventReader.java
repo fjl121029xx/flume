@@ -19,20 +19,6 @@
 
 package org.apache.flume.source.taildir;
 
-import static org.apache.flume.source.taildir.TaildirSourceConfigurationConstants.*;
-import static org.junit.Assert.*;
-
-import java.io.File;
-import java.io.IOException;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import org.apache.flume.Event;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-
 import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
 import com.google.common.collect.HashBasedTable;
@@ -41,6 +27,22 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Table;
 import com.google.common.io.Files;
+import org.apache.flume.Event;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import static org.apache.flume.source.taildir.TaildirSourceConfigurationConstants
+                  .BYTE_OFFSET_HEADER_KEY;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class TestTaildirEventReader {
   private File tmpDir;
@@ -85,7 +87,8 @@ public class TestTaildirEventReader {
   }
 
   private ReliableTaildirEventReader getReader(boolean addByteOffset) {
-    Map<String, String> filePaths = ImmutableMap.of("testFiles", tmpDir.getAbsolutePath() + "/file.*");
+    Map<String, String> filePaths = ImmutableMap.of("testFiles",
+                                                    tmpDir.getAbsolutePath() + "/file.*");
     Table<String, String, String> headerTable = HashBasedTable.create();
     return getReader(filePaths, headerTable, addByteOffset);
   }
@@ -472,7 +475,8 @@ public class TestTaildirEventReader {
   @Test
   public void testNewLineBoundaries() throws IOException {
     File f1 = new File(tmpDir, "file1");
-    Files.write("file1line1\nfile1line2\rfile1line2\nfile1line3\r\nfile1line4\n", f1, Charsets.UTF_8);
+    Files.write("file1line1\nfile1line2\rfile1line2\nfile1line3\r\nfile1line4\n",
+                f1, Charsets.UTF_8);
 
     ReliableTaildirEventReader reader = getReader();
     List<String> out = Lists.newArrayList();
@@ -488,5 +492,30 @@ public class TestTaildirEventReader {
     //Should treat \r\n as line boundary
     assertTrue(out.contains("file1line3"));
     assertTrue(out.contains("file1line4"));
+  }
+
+  @Test
+  // Ensure tail file is set to be read when its last updated time
+  // equals the underlying file's modification time and there are
+  // pending bytes to be read.
+  public void testUpdateWhenLastUpdatedSameAsModificationTime() throws IOException {
+    File file = new File(tmpDir, "file");
+    Files.write("line1\n", file, Charsets.UTF_8);
+
+    ReliableTaildirEventReader reader = getReader();
+    for (TailFile tf : reader.getTailFiles().values()) {
+      reader.readEvents(tf, 1);
+      reader.commit();
+    }
+
+    Files.append("line2\n", file, Charsets.UTF_8);
+    for (TailFile tf : reader.getTailFiles().values()) {
+      tf.setLastUpdated(file.lastModified());
+    }
+
+    reader.updateTailFiles();
+    for (TailFile tf : reader.getTailFiles().values()) {
+      assertEquals(true, tf.needTail());
+    }
   }
 }

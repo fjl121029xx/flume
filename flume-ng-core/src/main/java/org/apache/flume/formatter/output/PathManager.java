@@ -16,58 +16,35 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.apache.flume.formatter.output;
 
 import java.io.File;
-import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.flume.Context;
 
-public class PathManager {
+/**
+ * Creates the files used by the RollingFileSink.
+ */
+public interface PathManager {
+  /**
+   * {@link Context} prefix
+   */
+  public static String CTX_PREFIX = "pathManager.";
 
-  private long seriesTimestamp;
-  private File baseDirectory;
-  private AtomicInteger fileIndex;
+  File nextFile();
 
-  private File currentFile;
+  File getCurrentFile();
 
-  public PathManager() {
-    seriesTimestamp = System.currentTimeMillis();
-    fileIndex = new AtomicInteger();
+  void rotate();
+
+  File getBaseDirectory();
+
+  void setBaseDirectory(File baseDirectory);
+
+  /**
+   * Knows how to construct this path manager.<br/>
+   * <b>Note: Implementations MUST provide a public a no-arg constructor.</b>
+   */
+  public interface Builder {
+    public PathManager build(Context context);
   }
-
-  public File nextFile() {
-    currentFile = new File(baseDirectory, seriesTimestamp + "-"
-        + fileIndex.incrementAndGet());
-
-    return currentFile;
-  }
-
-  public File getCurrentFile() {
-    if (currentFile == null) {
-      return nextFile();
-    }
-
-    return currentFile;
-  }
-
-  public void rotate() {
-    currentFile = null;
-  }
-
-  public File getBaseDirectory() {
-    return baseDirectory;
-  }
-
-  public void setBaseDirectory(File baseDirectory) {
-    this.baseDirectory = baseDirectory;
-  }
-
-  public long getSeriesTimestamp() {
-    return seriesTimestamp;
-  }
-
-  public AtomicInteger getFileIndex() {
-    return fileIndex;
-  }
-
 }

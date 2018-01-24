@@ -156,9 +156,6 @@ public class NetcatSource extends AbstractSource implements Configurable,
 
     counterGroup.incrementAndGet("open.attempts");
 
-    handlerService = Executors.newCachedThreadPool(new ThreadFactoryBuilder()
-        .setNameFormat("netcat-handler-%d").build());
-
     try {
       SocketAddress bindPoint = new InetSocketAddress(hostName, port);
 
@@ -170,8 +167,12 @@ public class NetcatSource extends AbstractSource implements Configurable,
     } catch (IOException e) {
       counterGroup.incrementAndGet("open.errors");
       logger.error("Unable to bind to socket. Exception follows.", e);
+      stop();
       throw new FlumeException(e);
     }
+
+    handlerService = Executors.newCachedThreadPool(new ThreadFactoryBuilder()
+        .setNameFormat("netcat-handler-%d").build());
 
     AcceptHandler acceptRunnable = new AcceptHandler(maxLineLength);
     acceptThreadShouldStop.set(false);
@@ -357,6 +358,11 @@ public class NetcatSource extends AbstractSource implements Configurable,
         counterGroup.incrementAndGet("sessions.completed");
       } catch (IOException e) {
         counterGroup.incrementAndGet("sessions.broken");
+        try {
+          socketChannel.close();
+        } catch (IOException ex) {
+          logger.error("Unable to close socket channel. Exception follows.", ex);
+        }
       }
 
       logger.debug("Connection handler exiting");

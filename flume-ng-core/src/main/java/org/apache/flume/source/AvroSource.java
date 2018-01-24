@@ -20,19 +20,6 @@
 package org.apache.flume.source;
 
 import com.google.common.base.Preconditions;
-import com.google.common.base.Throwables;
-import java.io.FileInputStream;
-import java.net.InetSocketAddress;
-import java.security.KeyStore;
-import java.security.Security;
-import java.util.*;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import javax.net.ssl.KeyManagerFactory;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLEngine;
-
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.avro.ipc.NettyServer;
 import org.apache.avro.ipc.NettyTransceiver;
@@ -48,15 +35,16 @@ import org.apache.flume.FlumeException;
 import org.apache.flume.Source;
 import org.apache.flume.conf.Configurable;
 import org.apache.flume.conf.Configurables;
+import org.apache.flume.conf.LogPrivacyUtil;
 import org.apache.flume.event.EventBuilder;
 import org.apache.flume.instrumentation.SourceCounter;
 import org.apache.flume.source.avro.AvroFlumeEvent;
 import org.apache.flume.source.avro.AvroSourceProtocol;
 import org.apache.flume.source.avro.Status;
-import org.jboss.netty.channel.ChannelPipelineFactory;
 import org.jboss.netty.channel.ChannelPipeline;
-import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory;
+import org.jboss.netty.channel.ChannelPipelineFactory;
 import org.jboss.netty.channel.Channels;
+import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory;
 import org.jboss.netty.handler.codec.compression.ZlibDecoder;
 import org.jboss.netty.handler.codec.compression.ZlibEncoder;
 import org.jboss.netty.handler.ipfilter.IpFilterRule;
@@ -65,6 +53,23 @@ import org.jboss.netty.handler.ipfilter.PatternRule;
 import org.jboss.netty.handler.ssl.SslHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import java.io.FileInputStream;
+import java.net.InetSocketAddress;
+import java.security.KeyStore;
+import java.security.Security;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * <p>
@@ -150,6 +155,7 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
   private boolean enableIpFilter;
   private String patternRuleConfigDefinition;
 
+  private NioServerSocketChannelFactory socketChannelFactory;
   private Server server;
   private SourceCounter sourceCounter;
 
@@ -205,7 +211,7 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
     if (enableIpFilter) {
       patternRuleConfigDefinition = context.getString(IP_FILTER_RULES_KEY);
       if (patternRuleConfigDefinition == null ||
-        patternRuleConfigDefinition.trim().isEmpty()) {
+          patternRuleConfigDefinition.trim().isEmpty()) {
         throw new FlumeException(
           "ipFilter is configured with true but ipFilterRules is not defined:" +
             " ");
@@ -227,28 +233,29 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
   public void start() {
     logger.info("Starting {}...", this);
 
-    Responder responder = new SpecificResponder(AvroSourceProtocol.class, this);
+    try {
+      Responder responder = new SpecificResponder(AvroSourceProtocol.class, this);
 
-    NioServerSocketChannelFactory socketChannelFactory = initSocketChannelFactory();
+      socketChannelFactory = initSocketChannelFactory();
 
-    ChannelPipelineFactory pipelineFactory = initChannelPipelineFactory();
+      ChannelPipelineFactory pipelineFactory = initChannelPipelineFactory();
 
-    server = new NettyServer(responder, new InetSocketAddress(bindAddress, port),
-          socketChannelFactory, pipelineFactory, null);
+      server = new NettyServer(responder, new InetSocketAddress(bindAddress, port),
+              socketChannelFactory, pipelineFactory, null);
+    } catch (org.jboss.netty.channel.ChannelException nce) {
+      logger.error("Avro source {} startup failed. Cannot initialize Netty server", getName(), nce);
+      stop();
+      throw new FlumeException("Failed to set up server socket", nce);
+    }
 
     connectionCountUpdater = Executors.newSingleThreadScheduledExecutor();
     server.start();
     sourceCounter.start();
     super.start();
     final NettyServer srv = (NettyServer)server;
-    connectionCountUpdater.scheduleWithFixedDelay(new Runnable(){
-
-      @Override
-      public void run() {
-        sourceCounter.setOpenConnectionCount(
-                Long.valueOf(srv.getNumActiveConnections()));
-      }
-    }, 0, 60, TimeUnit.SECONDS);
+    connectionCountUpdater.scheduleWithFixedDelay(
+        () -> sourceCounter.setOpenConnectionCount(Long.valueOf(srv.getNumActiveConnections())),
+        0, 60, TimeUnit.SECONDS);
 
     logger.info("Avro source {} started.", getName());
   }
@@ -256,22 +263,17 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
   private NioServerSocketChannelFactory initSocketChannelFactory() {
     NioServerSocketChannelFactory socketChannelFactory;
     if (maxThreads <= 0) {
-      socketChannelFactory = new NioServerSocketChannelFactory
-        (Executors.newCachedThreadPool(new ThreadFactoryBuilder().
-          setNameFormat("Avro " + NettyTransceiver.class.getSimpleName()
-            + " Boss-%d").build()),
-          Executors.newCachedThreadPool(new ThreadFactoryBuilder().
-            setNameFormat("Avro " + NettyTransceiver.class.getSimpleName()
-              + "  I/O Worker-%d").build()));
+      socketChannelFactory = new NioServerSocketChannelFactory(
+          Executors.newCachedThreadPool(new ThreadFactoryBuilder().setNameFormat(
+              "Avro " + NettyTransceiver.class.getSimpleName() + " Boss-%d").build()),
+          Executors.newCachedThreadPool(new ThreadFactoryBuilder().setNameFormat(
+              "Avro " + NettyTransceiver.class.getSimpleName() + "  I/O Worker-%d").build()));
     } else {
       socketChannelFactory = new NioServerSocketChannelFactory(
-        Executors.newCachedThreadPool(new ThreadFactoryBuilder().
-          setNameFormat(
-            "Avro " + NettyTransceiver.class.getSimpleName()
-              + " Boss-%d").build()),
-        Executors.newFixedThreadPool(maxThreads, new ThreadFactoryBuilder().
-          setNameFormat("Avro " + NettyTransceiver.class.getSimpleName() +
-            "  I/O Worker-%d").build()));
+        Executors.newCachedThreadPool(new ThreadFactoryBuilder().setNameFormat(
+            "Avro " + NettyTransceiver.class.getSimpleName() + " Boss-%d").build()),
+        Executors.newFixedThreadPool(maxThreads, new ThreadFactoryBuilder().setNameFormat(
+            "Avro " + NettyTransceiver.class.getSimpleName() + "  I/O Worker-%d").build()));
     }
     return socketChannelFactory;
   }
@@ -285,12 +287,7 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
         keystorePassword, keystoreType, enableIpFilter,
         patternRuleConfigDefinition);
     } else {
-      pipelineFactory = new ChannelPipelineFactory() {
-        @Override
-        public ChannelPipeline getPipeline() throws Exception {
-          return Channels.pipeline();
-        }
-      };
+      pipelineFactory = Channels::pipeline;
     }
     return pipelineFactory;
   }
@@ -299,28 +296,31 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
   public void stop() {
     logger.info("Avro source {} stopping: {}", getName(), this);
 
-    server.close();
-
-    try {
-      server.join();
-    } catch (InterruptedException e) {
-      logger.info("Avro source " + getName() + ": Interrupted while waiting " +
-          "for Avro server to stop. Exiting. Exception follows.", e);
-    }
-    sourceCounter.stop();
-    connectionCountUpdater.shutdown();
-    while(!connectionCountUpdater.isTerminated()){
+    if (server != null) {
+      server.close();
       try {
-        Thread.sleep(100);
-      } catch (InterruptedException ex) {
-        logger.error("Interrupted while waiting for connection count executor "
-                + "to terminate", ex);
-        Throwables.propagate(ex);
+        server.join();
+        server = null;
+      } catch (InterruptedException e) {
+        logger.info("Avro source " + getName() + ": Interrupted while waiting " +
+                "for Avro server to stop. Exiting. Exception follows.", e);
+        Thread.currentThread().interrupt();
       }
     }
+
+    if (socketChannelFactory != null) {
+      socketChannelFactory.releaseExternalResources();
+      socketChannelFactory = null;
+    }
+
+    sourceCounter.stop();
+    if (connectionCountUpdater != null) {
+      connectionCountUpdater.shutdownNow();
+      connectionCountUpdater = null;
+    }
+
     super.stop();
-    logger.info("Avro source {} stopped. Metrics: {}", getName(),
-        sourceCounter);
+    logger.info("Avro source {} stopped. Metrics: {}", getName(), sourceCounter);
   }
 
   @Override
@@ -344,8 +344,14 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
 
   @Override
   public Status append(AvroFlumeEvent avroEvent) {
-    logger.debug("Avro source {}: Received avro event: {}", getName(),
-        avroEvent);
+    if (logger.isDebugEnabled()) {
+      if (LogPrivacyUtil.allowLogRawData()) {
+        logger.debug("Avro source {}: Received avro event: {}", getName(), avroEvent);
+      } else {
+        logger.debug("Avro source {}: Received avro event", getName());
+      }
+    }
+
     sourceCounter.incrementAppendReceivedCount();
     sourceCounter.incrementEventReceivedCount();
 
@@ -399,44 +405,40 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
     return Status.OK;
   }
 
-  private PatternRule generateRule(
-    String patternRuleDefinition) throws FlumeException {
+  private PatternRule generateRule(String patternRuleDefinition) throws FlumeException {
     patternRuleDefinition = patternRuleDefinition.trim();
     //first validate the format
     int firstColonIndex = patternRuleDefinition.indexOf(":");
     if (firstColonIndex == -1) {
       throw new FlumeException(
-        "Invalid ipFilter patternRule '" + patternRuleDefinition +
+          "Invalid ipFilter patternRule '" + patternRuleDefinition +
           "' should look like <'allow'  or 'deny'>:<'ip' or " +
           "'name'>:<pattern>");
     } else {
-      String ruleAccessFlag = patternRuleDefinition.substring(0,
-        firstColonIndex);
-      int secondColonIndex = patternRuleDefinition.indexOf(":",
-        firstColonIndex + 1);
-      if ((!ruleAccessFlag.equals("allow") &&
-        !ruleAccessFlag.equals("deny")) || secondColonIndex == -1) {
+      String ruleAccessFlag = patternRuleDefinition.substring(0, firstColonIndex);
+      int secondColonIndex = patternRuleDefinition.indexOf(":", firstColonIndex + 1);
+      if ((!ruleAccessFlag.equals("allow") && !ruleAccessFlag.equals("deny")) ||
+          secondColonIndex == -1) {
         throw new FlumeException(
-          "Invalid ipFilter patternRule '" + patternRuleDefinition +
+            "Invalid ipFilter patternRule '" + patternRuleDefinition +
             "' should look like <'allow'  or 'deny'>:<'ip' or " +
             "'name'>:<pattern>");
       }
 
       String patternTypeFlag = patternRuleDefinition.substring(
-        firstColonIndex + 1, secondColonIndex);
-      if ((!patternTypeFlag.equals("ip") &&
-        !patternTypeFlag.equals("name"))) {
+          firstColonIndex + 1, secondColonIndex);
+      if ((!patternTypeFlag.equals("ip") && !patternTypeFlag.equals("name"))) {
         throw new FlumeException(
-          "Invalid ipFilter patternRule '" + patternRuleDefinition +
+            "Invalid ipFilter patternRule '" + patternRuleDefinition +
             "' should look like <'allow'  or 'deny'>:<'ip' or " +
             "'name'>:<pattern>");
       }
 
       boolean isAllow = ruleAccessFlag.equals("allow");
       String patternRuleString = (patternTypeFlag.equals("ip") ? "i" : "n")
-        + ":" + patternRuleDefinition.substring(secondColonIndex + 1);
+          + ":" + patternRuleDefinition.substring(secondColonIndex + 1);
       logger.info("Adding ipFilter PatternRule: "
-        + (isAllow ? "Allow" : "deny") + " " + patternRuleString);
+          + (isAllow ? "Allow" : "deny") + " " + patternRuleString);
       return new PatternRule(isAllow, patternRuleString);
     }
   }
@@ -458,9 +460,9 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
     private String patternRuleConfigDefinition;
 
     public AdvancedChannelPipelineFactory(boolean enableCompression,
-      boolean enableSsl, String keystore, String keystorePassword,
-      String keystoreType, boolean enableIpFilter,
-      String patternRuleConfigDefinition) {
+        boolean enableSsl, String keystore, String keystorePassword,
+        String keystoreType, boolean enableIpFilter,
+        String patternRuleConfigDefinition) {
       this.enableCompression = enableCompression;
       this.enableSsl = enableSsl;
       this.keystore = keystore;
@@ -505,7 +507,6 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
         pipeline.addFirst("inflater", new ZlibDecoder());
       }
 
-
       if (enableSsl) {
         SSLEngine sslEngine = createServerSSLContext().createSSLEngine();
         sslEngine.setUseClientMode(false);
@@ -527,11 +528,10 @@ public class AvroSource extends AbstractSource implements EventDrivenSource,
       if (enableIpFilter) {
 
         logger.info("Setting up ipFilter with the following rule definition: " +
-          patternRuleConfigDefinition);
+                    patternRuleConfigDefinition);
         IpFilterRuleHandler ipFilterHandler = new IpFilterRuleHandler();
         ipFilterHandler.addAll(rules);
-        logger.info(
-          "Adding ipFilter with " + ipFilterHandler.size() + " rules");
+        logger.info("Adding ipFilter with " + ipFilterHandler.size() + " rules");
 
         pipeline.addFirst("ipFilter", ipFilterHandler);
       }
